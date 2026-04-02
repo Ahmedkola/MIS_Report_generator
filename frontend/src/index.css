@@ -1,0 +1,66 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    background-color: #0A0F1E;
+    color: #E2E8F0;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #0A0F1E;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #1E293B;
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #334155;
+  }
+}
+
+@layer components {
+  .tab-active {
+    @apply border-b-2 border-gold text-gold;
+  }
+
+  .tab-inactive {
+    @apply border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600;
+  }
+
+  .section-header {
+    @apply bg-slate-800 text-slate-100 font-semibold tracking-widest uppercase text-xs;
+  }
+
+  .group-header {
+    @apply bg-[#1C2333] text-slate-300 font-medium text-sm;
+  }
+
+  .line-item {
+    @apply text-slate-400 text-sm hover:bg-slate-800/40 transition-colors;
+  }
+
+  .subtotal-row {
+    @apply bg-[#151E2E] text-slate-200 font-medium text-sm border-t border-slate-700/50;
+  }
+
+  .total-row {
+    @apply bg-[#0E1829] text-slate-100 font-semibold text-sm border-t-2 border-slate-600;
+  }
+
+  .summary-row {
+    @apply font-bold text-sm border-t-2 border-gold/40;
+  }
+}
