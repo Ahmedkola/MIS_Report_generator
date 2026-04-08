@@ -111,7 +111,7 @@ class TallyAPIClient:
     # We no longer hardcode 110011, we pass the exact active company name.
     COMPANY_ID = "Unreal Estate Habitat Private Limited"
 
-    def __init__(self, host: str = "localhost", port: int = 9000, timeout: int = 30):
+    def __init__(self, host: str = "127.0.0.1", port: int = 9000, timeout: int = 30):
         self.base_url = f"http://{host}:{port}"
         self.timeout = timeout
         self._session = requests.Session()
@@ -137,15 +137,18 @@ class TallyAPIClient:
         #     logger.info("Strategy 1 (TDL): %d ledgers.", len(results))
         #     return results
 
-        # Strategy 1 – Trial Balance Report API (Primary for period balances)
-        logger.info("Using Strategy 1 (Trial Balance Report API)…")
-        results = self._fetch_via_report(from_date, to_date)
-        if results:
-            logger.info("Strategy 1 (Report): %d ledgers.", len(results))
-            return results
+        # Strategy 1 – Trial Balance Report API (primary; fast on 127.0.0.1)
+        try:
+            logger.info("Using Strategy 1 (Trial Balance Report API)...")
+            results = self._fetch_via_report(from_date, to_date)
+            if results:
+                logger.info("Strategy 1 (Report): %d ledgers.", len(results))
+                return results
+            logger.warning("Strategy 1 returned empty results.")
+        except (TimeoutError, ConnectionError, requests.Timeout, requests.ConnectionError) as e:
+            logger.warning("Strategy 1 failed (%s). Falling back to Strategy 2 (Collection API)...", type(e).__name__)
 
-        # Strategy 2 – Raw Collection API (Fallback, mostly static masters)
-        logger.warning("Strategy 1 empty. Trying Strategy 2 (Collection API)…")
+        # Strategy 2 – Raw Collection API (fallback; returns masters without period amounts)
         results = self._fetch_via_collection(from_date, to_date)
         logger.info("Strategy 2 (Collection): %d ledgers.", len(results))
         return results

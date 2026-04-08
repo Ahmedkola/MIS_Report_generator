@@ -18,7 +18,7 @@ class BaseReportProcessor:
     def __init__(self, from_date: str = "20250401", to_date: str = "20260131"):
         self.from_date = from_date
         self.to_date = to_date
-        self.api = TallyAPIClient()
+        self.api = TallyAPIClient(timeout=120)
         self._raw_data = None
         self._mappings = None
         

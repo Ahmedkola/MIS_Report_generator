@@ -1,4 +1,5 @@
 from django.http import JsonResponse
+from django.core.cache import cache
 from mis_engine.reports.pnl_bs import StandardReportProcessor
 from mis_engine.reports.matrix import MatrixReportProcessor
 from mis_engine.reports.unit import UnitReportProcessor
@@ -15,7 +16,7 @@ def _get_dates(request):
 def _handle_error(e):
     import traceback
     return JsonResponse({
-        "status": "error", 
+        "status": "error",
         "message": str(e),
         "traceback": traceback.format_exc()
     }, status=500)
@@ -31,6 +32,57 @@ def _build_payload(processor, data_key, data):
             data_key: data,
         }
     }
+
+# ── Unified endpoint ──────────────────────────────────────────────────────────
+# Returns all four reports in a single response.
+# Cached by (from_date, to_date) for 30 minutes.
+# Pass ?bust=true to force regeneration (used when the user clicks "Generate").
+
+def get_all_reports(request):
+    try:
+        from_date, to_date = _get_dates(request)
+        bust = request.GET.get('bust', 'false').lower() == 'true'
+
+        cache_key = f"mis_all_{from_date}_{to_date}"
+
+        if bust:
+            cache.delete(cache_key)
+
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return JsonResponse(cached)
+
+        # Run all processors — each shares the same Tally connection session
+        std  = StandardReportProcessor(from_date, to_date)
+        std_reports = std.process()
+
+        mat  = MatrixReportProcessor(from_date, to_date)
+        mat_reports = mat.process()
+
+        unit = UnitReportProcessor(from_date, to_date)
+        unit_report = unit.process()
+
+        payload = {
+            "status": "success",
+            "data": {
+                "company_id":   std.api.COMPANY_ID,
+                "company_name": std.api.COMPANY_ID,
+                "period_start": from_date,
+                "period_end":   to_date,
+                "consolidated_pnl": std_reports["pnl"],
+                "balance_sheet":    std_reports["balance_sheet"],
+                "matrix_pnl":       mat_reports,
+                "unit_wise":        unit_report,
+            }
+        }
+
+        cache.set(cache_key, payload)
+        return JsonResponse(payload)
+
+    except Exception as e:
+        return _handle_error(e)
+
+# ── Individual endpoints (kept for backwards compatibility / direct testing) ──
 
 def get_pnl(request):
     try:

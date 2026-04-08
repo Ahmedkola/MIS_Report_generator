@@ -1,0 +1,29 @@
+﻿Searching DB for terms...
+
+--- Term: house ---
+  Household Items -> Expenses | Direct Expenses | Rent
+
+--- Term: pillow ---
+  Mattress/Pillow/Cover -> Excluded | Excluded | Mattress/Pillow/Cover
+  Pillow/Cover -> Expenses | Direct Expenses | Rent
+
+--- Term: brokerage ---
+  Brokerage -> Expenses | Direct Expenses | Rent
+
+--- Term: water ---
+  Security Deposit Waterford -> Assets | Current Assets | Loans & Advances (Asset)
+  Water Ford Capex-3BHK -> Assets | Fixed Assets | Fixed Assets
+  Waterford Capex -> Assets | Fixed Assets | Fixed Assets
+  EB Prestige Waterford 11013 -> Excluded | Excluded | EB Prestige Waterford 11013
+  EB Prestige Waterford 12194 -> Excluded | Excluded | EB Prestige Waterford 12194
+  Prestige Waterford 11013 Sales A/c -> Excluded | Excluded | Prestige Waterford 11013 Sales A/c
+  Prestige Waterford 12194 Sales A/c -> Excluded | Excluded | Prestige Waterford 12194 Sales A/c
+  Rent Waterford -> Expenses | Direct Expenses | Rent
+  Prestige Waterford -> Income | Sales Accounts | Prestige Waterford
+
+--- Term: home ---
+  Home Appliance -> Assets | Fixed Assets | Home Appliances
+  SGLAM HOMES LLP -> Equity & Liabilities | Current Liabilities | Landlord Payables
+
+--- Term: mattress ---
+  Mattress/Pillow/Cover -> Excluded | Excluded | Mattress/Pillow/Cover

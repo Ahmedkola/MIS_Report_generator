@@ -1,46 +1,23 @@
-import { useState, useEffect } from 'react'
-import { useSearchParams } from 'react-router-dom'
-import { fetchReportData } from '../utils/api'
+import { useReport } from '../context/ReportContext'
 import PnLReport from '../components/PnLReport'
 import SummaryCards from '../components/SummaryCards'
 import { SectionTitle, LoadingState, ErrorState, EmptyState } from '../components/Shared'
 
 export default function PnLPage() {
-  const [searchParams] = useSearchParams()
-  const fromYM = searchParams.get('from')
-  const toYM = searchParams.get('to')
-
-  const [data, setData] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
-
-  useEffect(() => {
-    let active = true
-    const load = async () => {
-      setLoading(true)
-      setError(null)
-      try {
-        const result = await fetchReportData('pnl', fromYM, toYM)
-        if (active) setData(result.data.consolidated_pnl)
-      } catch (e) {
-        if (active) setError(e.message)
-      } finally {
-        if (active) setLoading(false)
-      }
-    }
-    load()
-    return () => { active = false }
-  }, [fromYM, toYM])
+  const { data, loading, error } = useReport()
 
   if (loading) return <LoadingState />
-  if (error) return <ErrorState error={error} />
-  if (!data) return <EmptyState />
+  if (error)   return <ErrorState error={error} />
+  if (!data)   return <EmptyState />
+
+  const pnl = data.consolidated_pnl
+  if (!pnl)  return <EmptyState />
 
   return (
     <section>
-      <SummaryCards pnl={data} matrix={null} />
-      <SectionTitle title="Consolidated Profit & Loss" sub={data.period} />
-      <PnLReport report={data} />
+      <SummaryCards pnl={pnl} matrix={null} />
+      <SectionTitle title="Consolidated Profit & Loss" sub={pnl.period} />
+      <PnLReport report={pnl} />
     </section>
   )
 }

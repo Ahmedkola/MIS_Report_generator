@@ -318,6 +318,9 @@ export function getMockData(from = '20250401', to = '20260131') {
     // matrix_pnl: one entry for the selected period
     matrix_pnl: [{ ...YTD_APR_JAN, period: `${from}_${to}`, label: null }],
 
+    // unit_wise: not included in mock — page will show EmptyState
+    unit_wise: null,
+
     cash_flow_statement: {},
   },
  }

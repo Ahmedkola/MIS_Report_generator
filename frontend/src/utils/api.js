@@ -12,6 +12,33 @@ function toTallyTo(ym) {
   return `${y}${String(m).padStart(2, '0')}${last}`
 }
 
+// Fetch all four reports in a single request.
+// bust=true tells the backend to bypass its cache (used on Generate click).
+export async function fetchAllData(fromYM, toYM, bust = false, signal = null) {
+  const from = toTallyFrom(fromYM)
+  const to   = toTallyTo(toYM)
+  const bustParam = bust ? '&bust=true' : ''
+  try {
+    const res = await fetch(
+      `/api/reports/all/?from=${from}&to=${to}${bustParam}`,
+      { signal: signal ?? AbortSignal.timeout(300_000) }
+    )
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const json = await res.json()
+    if (json.status === 'error') throw new Error(json.message)
+    return { data: json.data, source: 'live' }
+  } catch (e) {
+    if (e?.name === 'AbortError') throw e
+    if (e?.name === 'TypeError' || e?.message?.includes('fetch')) {
+      await new Promise((r) => setTimeout(r, 400))
+      const mock = getMockData(from, to)
+      // getMockData returns { status, data: { ... } } — unwrap to match live response
+      return { data: mock.data ?? mock, source: 'mock' }
+    }
+    throw e
+  }
+}
+
 export async function fetchReportData(endpoint, fromYM, toYM) {
   const from = toTallyFrom(fromYM)
   const to   = toTallyTo(toYM)

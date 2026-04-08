@@ -1,22 +1,24 @@
 import { useState, useEffect } from 'react'
-import { Outlet, useNavigate, useSearchParams, useLocation } from 'react-router-dom'
+import { Outlet, useSearchParams } from 'react-router-dom'
+import { useReport } from '../context/ReportContext'
 import Header from '../components/Header'
 import ReportTabs from '../components/ReportTabs'
 import DateRangePicker from '../components/DateRangePicker'
 
 export default function DashboardLayout() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const location = useLocation()
-  
-  const initialFrom = searchParams.get('from') || '2025-04'
-  const initialTo = searchParams.get('to') || '2026-01'
-  
-  const [fromYM, setFromYM] = useState(initialFrom)
-  const [toYM, setToYM]     = useState(initialTo)
+  const { loading, generate } = useReport()
 
+  const initialFrom = searchParams.get('from') || '2025-04'
+  const initialTo   = searchParams.get('to')   || '2026-01'
+
+  const [fromYM, setFromYM] = useState(initialFrom)
+  const [toYM,   setToYM]   = useState(initialTo)
+
+  // Keep local picker state in sync when URL changes externally (e.g. browser back)
   useEffect(() => {
     setFromYM(searchParams.get('from') || '2025-04')
-    setToYM(searchParams.get('to') || '2026-01')
+    setToYM(searchParams.get('to')     || '2026-01')
   }, [searchParams])
 
   const handlePickerChange = (field, value) => {
@@ -24,10 +26,11 @@ export default function DashboardLayout() {
     else setToYM(value)
   }
 
-  const navigate = useNavigate()
-
-  const generate = () => {
+  const handleGenerate = () => {
+    // Update URL so tabs preserve the date range and the page is bookmarkable
     setSearchParams({ from: fromYM, to: toYM })
+    // Fetch all reports at once, bust the server cache
+    generate(fromYM, toYM, true)
   }
 
   return (
@@ -40,8 +43,8 @@ export default function DashboardLayout() {
             from={fromYM}
             to={toYM}
             onChange={handlePickerChange}
-            onGenerate={generate}
-            loading={false}
+            onGenerate={handleGenerate}
+            loading={loading}
           />
         </div>
       </div>
