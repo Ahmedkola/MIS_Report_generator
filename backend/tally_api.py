@@ -537,6 +537,165 @@ class TallyAPIClient:
 
         return vouchers
 
+    # ------------------------------------------------------------------
+    # Strategy: Direct P&L Report API
+    # ------------------------------------------------------------------
+
+    def fetch_pnl_report(self, from_date: str, to_date: str) -> dict:
+        """
+        Fetches Tally's Profit & Loss report directly.
+
+        Returns a dict keyed by Tally's own section names, e.g.:
+          {
+            "Sales Accounts":   {"total": 75414283.37, "items": [{"name": "Koramangala", "amount": 8265642.68}, ...]},
+            "Direct Incomes":   {"total": 7205.65,     "items": [...]},
+            "Direct Expenses":  {"total": -44615529.20,"items": [...]},
+            "Indirect Incomes": {"total": 237060.06,   "items": [...]},
+            "Indirect Expenses":{"total": -12642983.93,"items": [...]},
+          }
+
+        This is the authoritative source for P&L classification — Tally already
+        knows which ledger belongs to which section, so no LedgerMapping lookup
+        is needed for P&L.
+        """
+        logger.info("Fetching P&L Report for [%s] %s → %s", self.COMPANY_ID, from_date, to_date)
+        payload = f"""<ENVELOPE>
+  <HEADER>
+    <TALLYREQUEST>Export Data</TALLYREQUEST>
+  </HEADER>
+  <BODY>
+    <EXPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>Profit &amp; Loss</REPORTNAME>
+        <STATICVARIABLES>
+          <SVCURRENTCOMPANY>{self.COMPANY_ID}</SVCURRENTCOMPANY>
+          <SVFROMDATE>{from_date}</SVFROMDATE>
+          <SVTODATE>{to_date}</SVTODATE>
+          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+          <EXPLODEFLAG>Yes</EXPLODEFLAG>
+          <EXPLODEALLLEVELS>Yes</EXPLODEALLLEVELS>
+        </STATICVARIABLES>
+      </REQUESTDESC>
+    </EXPORTDATA>
+  </BODY>
+</ENVELOPE>"""
+
+        raw_bytes = self._post_raw(payload)
+        if not raw_bytes:
+            logger.warning("P&L report returned no data.")
+            return {}
+
+        # Dump raw bytes for debugging (helps diagnose encoding / format issues)
+        try:
+            with open("pnl_dump.bin", "wb") as f:
+                f.write(raw_bytes)
+            logger.info("Dumped raw P&L response to pnl_dump.bin (%d bytes)", len(raw_bytes))
+        except OSError:
+            pass
+
+        # Tally responds in UTF-16 LE (BOM: FF FE). Decode explicitly so we
+        # don't get the spaced-character artefact seen when decoded as Latin-1.
+        try:
+            if raw_bytes[:2] in (b'\xff\xfe', b'\xfe\xff'):
+                raw_xml = raw_bytes.decode("utf-16")
+            else:
+                raw_xml = raw_bytes.decode("utf-8", errors="replace")
+        except Exception as exc:
+            logger.error("P&L report decode error: %s", exc)
+            return {}
+
+        # Also dump the decoded XML for inspection
+        try:
+            with open("pnl_dump.xml", "w", encoding="utf-8") as f:
+                f.write(raw_xml)
+            logger.info("Dumped decoded P&L XML to pnl_dump.xml")
+        except OSError:
+            pass
+
+        sections = self._parse_pnl_xml(raw_xml)
+        logger.info("P&L sections found: %s", list(sections.keys()))
+        return sections
+
+    def _parse_pnl_xml(self, raw_xml: str) -> dict:
+        """
+        Parses Tally's Profit & Loss report XML.
+
+        Structure (sibling nodes under root ENVELOPE):
+          <DSPACCNAME><DSPDISPNAME>Sales Accounts</DSPDISPNAME></DSPACCNAME>
+          <PLAMT><PLSUBAMT></PLSUBAMT><BSMAINAMT>75414283.37</BSMAINAMT></PLAMT>
+
+          <!-- sub-section: PLSUBAMT filled, BSMAINAMT empty -->
+          <DSPACCNAME><DSPDISPNAME>Direct Expenses</DSPDISPNAME></DSPACCNAME>
+          <PLAMT><PLSUBAMT>-44615529.20</PLSUBAMT><BSMAINAMT></BSMAINAMT></PLAMT>
+
+          <!-- individual item: BSNAME + BSAMT -->
+          <BSNAME><DSPACCNAME><DSPDISPNAME>Electricity</DSPDISPNAME></DSPACCNAME></BSNAME>
+          <BSAMT><BSSUBAMT>-2462696.62</BSSUBAMT><BSMAINAMT></BSMAINAMT></BSAMT>
+
+        Rules:
+          • DSPACCNAME (top-level) + PLAMT/BSMAINAMT filled  → top-level section header
+          • DSPACCNAME (top-level) + PLAMT/PLSUBAMT filled   → sub-section (becomes active bucket for items)
+          • BSNAME + BSAMT/BSSUBAMT                          → individual line item; stored under current active section
+        """
+        try:
+            root = ET.fromstring(_sanitize_xml(raw_xml))
+        except ET.ParseError as exc:
+            logger.error("P&L XML parse error: %s", exc)
+            return {}
+
+        sections: dict = {}          # keyed by section name
+        current_section: str | None = None   # most recently seen active section
+        pending_item: str | None = None
+
+        for elem in root:
+            tag = elem.tag
+
+            if tag == "DSPACCNAME":
+                disp = elem.find("DSPDISPNAME")
+                if disp is not None and disp.text:
+                    current_section = disp.text.strip()
+                    if current_section and current_section not in sections:
+                        sections[current_section] = {"total": 0.0, "items": []}
+                pending_item = None
+
+            elif tag == "PLAMT" and current_section:
+                # BSMAINAMT = top-level section total (may be positive or negative)
+                main_node = elem.find("BSMAINAMT")
+                sub_node  = elem.find("PLSUBAMT")
+                raw_main  = main_node.text.strip() if (main_node is not None and main_node.text) else ""
+                raw_sub   = sub_node.text.strip()  if (sub_node  is not None and sub_node.text)  else ""
+                amount_str = raw_main if raw_main else raw_sub
+                if amount_str:
+                    try:
+                        sections[current_section]["total"] = float(amount_str)
+                    except ValueError:
+                        pass
+
+            elif tag == "BSNAME":
+                disp = elem.find(".//DSPDISPNAME")
+                pending_item = disp.text.strip() if (disp is not None and disp.text) else None
+
+            elif tag == "BSAMT" and pending_item and current_section:
+                sub_node = elem.find("BSSUBAMT")
+                raw_val  = sub_node.text.strip() if (sub_node is not None and sub_node.text) else ""
+                if raw_val:
+                    try:
+                        amount = float(raw_val)
+                        if amount != 0.0:
+                            sections[current_section]["items"].append(
+                                {"name": pending_item, "amount": amount}
+                            )
+                    except ValueError:
+                        pass
+                pending_item = None
+
+        logger.info(
+            "P&L parse: %d sections, %d total items",
+            len(sections),
+            sum(len(v["items"]) for v in sections.values()),
+        )
+        return sections
+
     def fetch_cost_center_breakup(self, from_date: str, to_date: str, cost_center_name: str) -> list[LedgerBalance]:
         """
         Queries Tally's Cost Centre Breakup report DIRECTLY for a specific cost center.
@@ -738,6 +897,30 @@ class TallyAPIClient:
             )
         except requests.HTTPError as exc:
             logger.error("Tally HTTP error: %s", exc)
+            return None
+
+    def _post_raw(self, xml_payload: str) -> bytes | None:
+        """Same as _post() but returns raw bytes so callers can handle encoding themselves."""
+        try:
+            r = self._session.post(
+                self.base_url,
+                data=xml_payload.encode("utf-8"),
+                timeout=self.timeout,
+            )
+            r.raise_for_status()
+            return r.content
+        except requests.exceptions.ConnectionError:
+            raise ConnectionError(
+                f"Cannot reach Tally at {self.base_url}.\n"
+                "Ensure TallyPrime is open and HTTP XML Server is enabled on port 9000."
+            )
+        except requests.exceptions.Timeout:
+            raise TimeoutError(
+                f"Tally did not respond within {self.timeout}s. "
+                "Check that Company 110011 is fully loaded."
+            )
+        except requests.HTTPError as exc:
+            logger.error("Tally HTTP error (raw): %s", exc)
             return None
 
 
