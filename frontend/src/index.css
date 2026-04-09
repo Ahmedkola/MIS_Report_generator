@@ -64,3 +64,39 @@
     @apply font-bold text-sm border-t-2 border-gold/40;
   }
 }
+
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+
+  body {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    background-color: #0A0F1E !important;
+    color: #E2E8F0 !important;
+  }
+
+  /* Make sure background colors render in PDFs */
+  * {
+    color-adjust: exact !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  
+  /* Avoid splitting rows across pages */
+  tr, .grid > div {
+    page-break-inside: avoid;
+  }
+  
+  /* Hide standard scrollbars for print */
+  ::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Expand all tables full width to use the landscape layout effectively */
+  table {
+    width: 100% !important;
+  }
+}

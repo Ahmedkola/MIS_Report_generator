@@ -86,6 +86,7 @@ export default function UnitWiseReport({ report }) {
 
   // Only show columns where there is any meaningful data
   const activeUnits = columns
+    .filter(([, bldg]) => bldg !== 'General')   // never show the General Office column
     .map(([d]) => d)
     .filter((disp) => {
       const d = data[disp]

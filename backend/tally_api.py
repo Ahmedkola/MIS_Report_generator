@@ -891,10 +891,15 @@ class TallyAPIClient:
     # Parent group names returned by Tally as section-header rows — NOT leaf ledgers.
     # These are subtotals and must be skipped to avoid double-counting.
     _CC_PARENT_GROUPS = frozenset([
+        # Top-level Tally section groups
         "Direct Expenses", "Indirect Expenses", "Fixed Assets", "Current Assets",
         "Loans & Advances (Asset)", "Capital Account", "Investments",
         "Current Liabilities", "Suspense A/c", "Profit & Loss A/c",
         "Misc. Expenses (Asset)", "Sales Accounts", "Indirect Incomes",
+        # Intermediate sub-groups within Direct Expenses that appear as parent rows
+        # when EXPLODEFLAG=Yes + ISDETAILED=Yes — their leaf ledgers carry the same
+        # amount so including both would double-count.
+        "RENT", "Salary", "Electricity",
     ])
 
     def _parse_cc_breakup_xml(self, raw_xml: str) -> dict[str, float]:

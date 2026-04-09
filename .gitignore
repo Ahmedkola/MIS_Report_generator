@@ -13,3 +13,6 @@ logs/
 *.log
 ~$*
 *.xlsx
+*.csv
+*.json
+*.xml

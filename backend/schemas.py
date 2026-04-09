@@ -268,7 +268,7 @@ COST_CENTERS: list[str] = [
 COST_CENTER_GROUPS: dict[str, list[str]] = {
     "JPN 202": ["JPN 202"],
     "Koramangala": [
-        "Kora -1", "Kora-101", "Kora-102", "Kora-103", "Kora-104",
+        "Kora -1", "Kora -2", "Kora -3",
         "Koramangala 1 General",
     ],
     "EEE": [
@@ -330,7 +330,7 @@ COST_CENTER_GROUPS: dict[str, list[str]] = {
     ],
     "Kora-2": [
         "Kora-001",
-        "Kora 2 101", "Kora 2 102", "Kora 2 103", "Kora 2 104",  # floor 1 unit CCs if set up
+        "Kora-101", "Kora-102", "Kora-103", "Kora-104",
         "Kora-201", "Kora-202", "Kora-203", "Kora-204",
         "Kora-301", "Kora-302", "Kora-303",
         "Kora 402", "Kora 404", "Kora 503", "Kora 504",
@@ -368,9 +368,9 @@ UNIT_COLUMNS: list[tuple[str, str | None, str]] = [
 
     # ── Koramangala (small building — 3 units, CCs: Kora-101/102/103) ──────
     # Sales ledgers: "Kormangala 1 Sales A/c", "Koramangala - 2 Sales A/c", etc.
-    ("Koramangala-1",        "Kora-101",                 "Koramangala"),
-    ("Koramangala-2",        "Kora-102",                 "Koramangala"),
-    ("Koramangala-3",        "Kora-103",                 "Koramangala"),
+    ("Koramangala-1",        "Kora -1",                  "Koramangala"),
+    ("Koramangala-2",        "Kora -2",                  "Koramangala"),
+    ("Koramangala-3",        "Kora -3",                  "Koramangala"),
 
     # ── East End Enclave (EEE) ─────────────────────────────────────────────
     ("EEE 101",              "EEE 101",                  "EEE"),
@@ -489,10 +489,10 @@ UNIT_COLUMNS: list[tuple[str, str | None, str]] = [
     # CCs for floor 1 (101-104) likely don't exist as separate CCs in Tally;
     # expenses for those units are captured under "Kora Building 2 General".
     ("Koramangala-New 001",  "Kora-001",                 "Kora-2"),
-    ("Koramangala-New 101",  "Kora 2 101",               "Kora-2"),
-    ("Koramangala-New 102",  "Kora 2 102",               "Kora-2"),
-    ("Koramangala-New 103",  "Kora 2 103",               "Kora-2"),
-    ("Koramangala-New 104",  "Kora 2 104",               "Kora-2"),
+    ("Koramangala-New 101",  "Kora-101",                 "Kora-2"),
+    ("Koramangala-New 102",  "Kora-102",                 "Kora-2"),
+    ("Koramangala-New 103",  "Kora-103",                 "Kora-2"),
+    ("Koramangala-New 104",  "Kora-104",                 "Kora-2"),
     ("Koramangala-New 201",  "Kora-201",                 "Kora-2"),
     ("Koramangala-New 202",  "Kora-202",                 "Kora-2"),
     ("Koramangala-New 203",  "Kora-203",                 "Kora-2"),
