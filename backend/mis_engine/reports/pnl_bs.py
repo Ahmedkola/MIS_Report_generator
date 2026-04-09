@@ -31,46 +31,27 @@ class StandardReportProcessor(BaseReportProcessor):
             "summary": {}
         }
 
-        # ── P&L: try Tally's P&L report first; fall back to Trial Balance ────
-        # Tally's P&L report pre-classifies every ledger, so no DB mapping is needed.
-        # If the P&L report fetch fails (wrong report name, Tally version, etc.)
-        # we fall back to the original Trial Balance + LedgerMapping approach.
+        # ── P&L: use Tally's own Group Summary classification ────────────────
+        # fetch_pnl_report now calls Group Summary per P&L group (EXPLODEFLAG=Yes)
+        # — same proven strategy as fetch_balance_sheet_group. This gives us
+        # Tally's own classification directly, no manual DB mapping needed.
         pnl_sections = {}
         try:
             pnl_sections = self.api.fetch_pnl_report(self.from_date, self.to_date)
         except Exception as exc:
             import logging
-            logging.getLogger("pnl_bs").warning("fetch_pnl_report failed (%s), falling back to Trial Balance.", exc)
+            logging.getLogger("pnl_bs").error("fetch_pnl_report failed: %s", exc)
 
-        if pnl_sections:
-            # ── Primary path: use Tally's own P&L classification ──────────────
-            for tally_section, section_data in pnl_sections.items():
-                mapping = self._PNL_SECTION_MAP.get(tally_section)
-                if not mapping:
-                    continue  # skip "Cost of Sales :" and unrecognised headers
-                report_section, report_group = mapping
-                for item in section_data["items"]:
-                    self._add_to_report(pnl_report, report_section, report_group, item["name"], item["amount"])
-        else:
-            # ── Fallback: Trial Balance + LedgerMapping ────────────────────────
-            raw_ledgers = self.raw_data
-            if not raw_ledgers:
-                raise ValueError("Tally returned 0 ledgers. Check connection or dates.")
-            for ledger in raw_ledgers:
-                ledger_name = ledger["ledger_name"]
-                amount      = ledger["amount"]
-                db_mapping  = self.mappings.get(ledger_name)
-                if not db_mapping:
-                    unmapped_section = "Income" if amount >= 0 else "Expenses"
-                    self._add_to_report(pnl_report, "Unmapped", unmapped_section, ledger_name, amount)
-                    continue
-                report_section = db_mapping.report_section
-                report_group   = db_mapping.report_group
-                line_item      = db_mapping.line_item
-                if report_section.lower() == "excluded":
-                    continue
-                if report_section.lower() in ["income", "expenses", "direct expenses", "indirect expenses"]:
-                    self._add_to_report(pnl_report, report_section, report_group, line_item, amount)
+        if not pnl_sections:
+            raise ValueError("Tally returned empty P&L. Check connection or dates.")
+
+        for tally_section, section_data in pnl_sections.items():
+            mapping = self._PNL_SECTION_MAP.get(tally_section)
+            if not mapping:
+                continue  # skip any unrecognised section
+            report_section, report_group = mapping
+            for item in section_data["items"]:
+                self._add_to_report(pnl_report, report_section, report_group, item["name"], item["amount"])
 
         self._calculate_summaries(pnl_report, bs_report)
 

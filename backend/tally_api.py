@@ -666,14 +666,23 @@ class TallyAPIClient:
         return vouchers
 
     # ------------------------------------------------------------------
-    # Strategy: Direct P&L Report API
+    # Strategy: P&L via Group Summary  ← AUTHORITATIVE
+    #
+    # The monolithic "Profit & Loss" report API can't be called by name via
+    # Tally's HTTP XML server. Instead, we call Group Summary once per P&L
+    # group — exactly the same proven approach used by fetch_balance_sheet_group.
+    # The XML format is identical: DSPACCNAME → DSPACCINFO (DSPCLDRAMTA/DSPCLCRAMTA).
     # ------------------------------------------------------------------
 
     def fetch_pnl_report(self, from_date: str, to_date: str) -> dict:
         """
-        Fetches Tally's Profit & Loss report directly.
+        Fetches P&L by calling Group Summary once per P&L group.
 
-        Returns a dict keyed by Tally's own section names, e.g.:
+        This mirrors exactly how fetch_balance_sheet_group works for the Balance Sheet.
+        The monolithic "Profit & Loss A/c" report cannot be fetched by name via Tally API,
+        but Group Summary is proven to work (confirmed by group_dump.xml).
+
+        Returns a dict keyed by Tally's own section names:
           {
             "Sales Accounts":   {"total": 75414283.37, "items": [{"name": "Koramangala", "amount": 8265642.68}, ...]},
             "Direct Incomes":   {"total": 7205.65,     "items": [...]},
@@ -681,68 +690,119 @@ class TallyAPIClient:
             "Indirect Incomes": {"total": 237060.06,   "items": [...]},
             "Indirect Expenses":{"total": -12642983.93,"items": [...]},
           }
-
-        This is the authoritative source for P&L classification — Tally already
-        knows which ledger belongs to which section, so no LedgerMapping lookup
-        is needed for P&L.
         """
-        logger.info("Fetching P&L Report for [%s] %s → %s", self.COMPANY_ID, from_date, to_date)
-        payload = f"""<ENVELOPE>
+        logger.info("Fetching P&L via Group Summary for [%s] %s → %s", self.COMPANY_ID, from_date, to_date)
+
+        PNL_GROUPS = [
+            "Sales Accounts",
+            "Direct Incomes",
+            "Direct Expenses",
+            "Indirect Incomes",
+            "Indirect Expenses",
+        ]
+
+        result: dict = {}
+
+        for group_name in PNL_GROUPS:
+            group_escaped = group_name.replace("&", "&amp;")
+
+            payload = f"""<ENVELOPE>
   <HEADER>
     <TALLYREQUEST>Export Data</TALLYREQUEST>
   </HEADER>
   <BODY>
     <EXPORTDATA>
       <REQUESTDESC>
-        <REPORTNAME>Profit &amp; Loss</REPORTNAME>
+        <REPORTNAME>Group Summary</REPORTNAME>
         <STATICVARIABLES>
           <SVCURRENTCOMPANY>{self.COMPANY_ID}</SVCURRENTCOMPANY>
           <SVFROMDATE>{from_date}</SVFROMDATE>
           <SVTODATE>{to_date}</SVTODATE>
           <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-          <EXPLODEFLAG>Yes</EXPLODEFLAG>
-          <EXPLODEALLLEVELS>Yes</EXPLODEALLLEVELS>
+          <GROUPNAME>{group_escaped}</GROUPNAME>
         </STATICVARIABLES>
       </REQUESTDESC>
     </EXPORTDATA>
   </BODY>
 </ENVELOPE>"""
 
-        raw_bytes = self._post_raw(payload)
-        if not raw_bytes:
-            logger.warning("P&L report returned no data.")
-            return {}
+            raw_xml = self._post(payload)
+            if not raw_xml:
+                logger.warning("P&L Group Summary returned no data for: %s", group_name)
+                result[group_name] = {"total": 0.0, "items": []}
+                continue
 
-        # Dump raw bytes for debugging (helps diagnose encoding / format issues)
+            items = self._parse_pnl_group_xml(raw_xml)
+            total = sum(item["amount"] for item in items)
+            result[group_name] = {"total": total, "items": items}
+            logger.info("P&L group [%s]: %d ledgers, total=%.2f", group_name, len(items), total)
+
+        return result
+
+    def _parse_pnl_group_xml(self, raw_xml: str) -> list[dict]:
+        """
+        Parses a single Group Summary response for a P&L group.
+
+        Proven XML structure (from user's directExp.xml, SalesAccount.xml, etc.):
+
+          <DSPACCNAME><DSPDISPNAME>Electricity</DSPDISPNAME></DSPACCNAME>
+          <DSPACCINFO>
+            <DSPCLDRAMT><DSPCLDRAMTA>-2462696.62</DSPCLDRAMTA></DSPCLDRAMT>  ← expense
+            <DSPCLCRAMT><DSPCLCRAMTA></DSPCLCRAMTA></DSPCLCRAMT>
+          </DSPACCINFO>
+
+          <DSPACCNAME><DSPDISPNAME>Koramangala</DSPDISPNAME></DSPACCNAME>
+          <DSPACCINFO>
+            <DSPCLDRAMT><DSPCLDRAMTA></DSPCLDRAMTA></DSPCLDRAMT>
+            <DSPCLCRAMT><DSPCLCRAMTA>8265642.68</DSPCLCRAMTA></DSPCLCRAMT>   ← revenue
+          </DSPACCINFO>
+
+        Uses .// to handle any nesting depth of DSPCLDRAMT/DSPCLCRAMTA wrapper.
+        Returns list of {"name": str, "amount": float}.
+          - Expenses: negative (Dr)
+          - Income: positive (Cr)
+        """
         try:
-            with open("pnl_dump.bin", "wb") as f:
-                f.write(raw_bytes)
-            logger.info("Dumped raw P&L response to pnl_dump.bin (%d bytes)", len(raw_bytes))
-        except OSError:
-            pass
+            root = ET.fromstring(_sanitize_xml(raw_xml))
+        except ET.ParseError as exc:
+            logger.error("P&L group XML parse error: %s", exc)
+            return []
 
-        # Tally responds in UTF-16 LE (BOM: FF FE). Decode explicitly so we
-        # don't get the spaced-character artefact seen when decoded as Latin-1.
-        try:
-            if raw_bytes[:2] in (b'\xff\xfe', b'\xfe\xff'):
-                raw_xml = raw_bytes.decode("utf-16")
-            else:
-                raw_xml = raw_bytes.decode("utf-8", errors="replace")
-        except Exception as exc:
-            logger.error("P&L report decode error: %s", exc)
-            return {}
+        items: list[dict] = []
+        pending_name: str | None = None
 
-        # Also dump the decoded XML for inspection
-        try:
-            with open("pnl_dump.xml", "w", encoding="utf-8") as f:
-                f.write(raw_xml)
-            logger.info("Dumped decoded P&L XML to pnl_dump.xml")
-        except OSError:
-            pass
+        for elem in root:
+            if elem.tag == "DSPACCNAME":
+                disp = elem.find("DSPDISPNAME")
+                pending_name = disp.text.strip() if disp is not None and disp.text else None
 
-        sections = self._parse_pnl_xml(raw_xml)
-        logger.info("P&L sections found: %s", list(sections.keys()))
-        return sections
+            elif elem.tag == "DSPACCINFO" and pending_name:
+                dr_node = elem.find(".//DSPCLDRAMTA")
+                cr_node = elem.find(".//DSPCLCRAMTA")
+
+                dr_raw = dr_node.text.strip() if dr_node is not None and dr_node.text else ""
+                cr_raw = cr_node.text.strip() if cr_node is not None and cr_node.text else ""
+
+                amount = 0.0
+                if dr_raw:
+                    try:
+                        amount = float(dr_raw)   # Tally gives Dr as negative already
+                    except ValueError:
+                        pass
+                elif cr_raw:
+                    try:
+                        amount = float(cr_raw)   # Cr = positive
+                    except ValueError:
+                        pass
+
+                if amount != 0.0:
+                    items.append({"name": pending_name, "amount": amount})
+
+                pending_name = None
+
+        return items
+
+
 
     def _parse_pnl_xml(self, raw_xml: str) -> dict:
         """
@@ -823,6 +883,71 @@ class TallyAPIClient:
             sum(len(v["items"]) for v in sections.values()),
         )
         return sections
+
+    def fetch_account_hierarchy(self) -> tuple[dict[str, str], set[str]]:
+        """
+        Fetches the complete Chart of Accounts tree from Tally (both Groups and Ledgers).
+        Returns a tuple: (hierarchy_dict, ledger_names_set)
+          - hierarchy_dict: mapping each node to its parent: {"Salary A/c": "Operating Costs"}
+          - ledger_names_set: a set of names that are specifically Ledgers (not Groups)
+        """
+        logger.info("Fetching complete Account Hierarchy from Tally")
+        
+        payload = f"""<ENVELOPE>
+  <HEADER>
+    <TALLYREQUEST>Export Data</TALLYREQUEST>
+  </HEADER>
+  <BODY>
+    <EXPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>List of Accounts</REPORTNAME>
+        <STATICVARIABLES>
+          <SVCURRENTCOMPANY>{self.COMPANY_ID}</SVCURRENTCOMPANY>
+          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+        </STATICVARIABLES>
+        <REQUESTDATA>
+          <TALLYMESSAGE xmlns:UDF="TallyUDF">
+            <COLLECTION ISMODIFY="No">
+              <TYPE>Group</TYPE>
+              <TYPE>Ledger</TYPE>
+              <FETCHLIST>
+                <FETCH>NAME</FETCH>
+                <FETCH>PARENT</FETCH>
+              </FETCHLIST>
+            </COLLECTION>
+          </TALLYMESSAGE>
+        </REQUESTDATA>
+      </REQUESTDESC>
+    </EXPORTDATA>
+  </BODY>
+</ENVELOPE>"""
+
+        raw_xml = self._post(payload)
+        hierarchy = {}
+        ledgers = set()
+        
+        if not raw_xml:
+            logger.warning("Empty response for Account Hierarchy")
+            return hierarchy, ledgers
+
+        try:
+            root = ET.fromstring(_sanitize_xml(raw_xml))
+            for item in root.findall(".//*"):
+                if item.tag in ("GROUP", "LEDGER"):
+                    name = item.get("NAME") or _text(item, "NAME")
+                    parent = _text(item, "PARENT")
+                    if name:
+                        clean_name = name.strip()
+                        if parent:
+                            hierarchy[clean_name] = parent.strip()
+                        if item.tag == "LEDGER":
+                            ledgers.add(clean_name)
+            
+            logger.info("Account Hierarchy: %d nodes, %d ledgers", len(hierarchy), len(ledgers))
+        except ET.ParseError as exc:
+            logger.error("Hierarchy XML parse error: %s", exc)
+
+        return hierarchy, ledgers
 
     def fetch_cost_center_breakup(self, from_date: str, to_date: str, cost_center_name: str) -> list[LedgerBalance]:
         """
