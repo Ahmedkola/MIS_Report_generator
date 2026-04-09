@@ -372,17 +372,21 @@ class TallyAPIClient:
     # Phase 5: Cost Centre Breakup API
     # ------------------------------------------------------------------
 
-    def fetch_balance_sheet(self, to_date: str) -> list[LedgerBalance]:
+    def fetch_balance_sheet(self, to_date: str) -> dict:
         """
-        Fetches the Balance Sheet at GROUP level (not exploded to individual ledgers).
-        The standard Balance Sheet report without EXPLODEFLAG returns one row per
-        top-level group (Fixed Assets, Current Assets, Capital Account, etc.),
-        which is exactly what we want — matching Tally's own BS display.
+        Fetches the Balance Sheet with full ledger-level detail (EXPLODEFLAG=Yes).
 
-        Returns LedgerBalance list where ledger_name = group name,
-        amount = signed group total (Dr=negative for assets, Cr=positive for liabilities).
+        Returns a dict keyed by top-level group name, e.g.:
+          {
+            "Capital Account":    {"total": 100000.0,   "items": [LedgerBalance, ...]},
+            "Loans (Liability)":  {"total": 27813510.18,"items": [...]},
+            "Fixed Assets":       {"total": -16795524.41,"items": [...]},
+            ...
+          }
+        Group totals are signed (positive=Cr/liability, negative=Dr/asset).
+        Item amounts are also signed the same way.
         """
-        logger.info("Fetching Balance Sheet (group level) as at %s", to_date)
+        logger.info("Fetching Balance Sheet (detailed) as at %s", to_date)
         payload = f"""<ENVELOPE>
   <HEADER>
     <TALLYREQUEST>Export Data</TALLYREQUEST>
@@ -395,6 +399,119 @@ class TallyAPIClient:
           <SVCURRENTCOMPANY>{self.COMPANY_ID}</SVCURRENTCOMPANY>
           <SVTODATE>{to_date}</SVTODATE>
           <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+          <EXPLODEFLAG>Yes</EXPLODEFLAG>
+          <EXPLODEALLLEVELS>Yes</EXPLODEALLLEVELS>
+        </STATICVARIABLES>
+      </REQUESTDESC>
+    </EXPORTDATA>
+  </BODY>
+</ENVELOPE>"""
+        raw_xml = self._post(payload)
+        if not raw_xml:
+            return {}
+        return self._parse_bs_xml(raw_xml)
+
+    def _parse_bs_xml(self, raw_xml: str) -> dict:
+        """
+        Parses the full exploded Tally Balance Sheet XML.
+
+        All rows use the same BSNAME/BSAMT sibling pattern.
+        Distinguishing group headers from sub-items:
+          Group header  → BSMAINAMT is filled, BSSUBAMT is empty
+          Sub-item      → BSSUBAMT is filled, BSMAINAMT is empty
+
+        Structure:
+          <BSNAME><DSPACCNAME><DSPDISPNAME>Capital Account</DSPDISPNAME></DSPACCNAME></BSNAME>
+          <BSAMT><BSSUBAMT></BSSUBAMT><BSMAINAMT>100000.00</BSMAINAMT></BSAMT>
+
+          <BSNAME><DSPACCNAME><DSPDISPNAME>Arbaz Capital</DSPDISPNAME></DSPACCNAME></BSNAME>
+          <BSAMT><BSSUBAMT>25000.00</BSSUBAMT><BSMAINAMT></BSMAINAMT></BSAMT>
+
+        Returns dict keyed by group name: {"total": float, "items": list[LedgerBalance]}.
+        Positive = Cr (liabilities), Negative = Dr (assets).
+        """
+        try:
+            root = ET.fromstring(_sanitize_xml(raw_xml))
+        except ET.ParseError as exc:
+            logger.error("BS XML parse error: %s", exc)
+            return {}
+
+        # Dump raw XML for debugging
+        try:
+            with open("bs_dump.xml", "w", encoding="utf-8") as _f:
+                _f.write(raw_xml)
+        except OSError:
+            pass
+
+        groups: dict = {}          # group_name → {"total": float, "items": list}
+        current_group: str | None = None
+        pending_name: str | None = None
+
+        for elem in root:
+            tag = elem.tag
+
+            if tag == "BSNAME":
+                disp = elem.find(".//DSPDISPNAME")
+                pending_name = disp.text.strip() if disp is not None and disp.text else None
+
+            elif tag == "BSAMT" and pending_name:
+                main_node = elem.find("BSMAINAMT")
+                sub_node  = elem.find("BSSUBAMT")
+                raw_main  = main_node.text.strip() if main_node is not None and main_node.text else ""
+                raw_sub   = sub_node.text.strip()  if sub_node  is not None and sub_node.text  else ""
+
+                if raw_main:
+                    # Group header — create a new bucket
+                    try:
+                        total = float(raw_main)
+                    except ValueError:
+                        total = 0.0
+                    groups[pending_name] = {"total": total, "items": []}
+                    current_group = pending_name
+
+                elif raw_sub and current_group:
+                    # Sub-item under current group
+                    try:
+                        value = float(raw_sub)
+                    except ValueError:
+                        value = 0.0
+                    if value != 0.0:
+                        dr_cr = "Dr" if value < 0 else "Cr"
+                        groups[current_group]["items"].append(LedgerBalance(
+                            ledger_name=pending_name,
+                            amount=value,
+                            dr_cr=dr_cr,
+                        ))
+
+                pending_name = None
+
+        logger.info("BS parse: %d groups, %d total items",
+                    len(groups),
+                    sum(len(v["items"]) for v in groups.values()))
+        return groups
+
+    def fetch_balance_sheet_group(self, group_name: str, to_date: str) -> list[LedgerBalance]:
+        """
+        Fetches individual ledgers within a BS top-level group.
+        Uses EXPLODEFLAG=Yes and PARENTGROUP to drill into one group.
+        Returns LedgerBalance list: Cr amounts positive, Dr amounts negative.
+        """
+        logger.info("Fetching BS group detail: %s as at %s", group_name, to_date)
+        group_escaped = group_name.replace("&", "&amp;")
+        payload = f"""<ENVELOPE>
+  <HEADER>
+    <TALLYREQUEST>Export Data</TALLYREQUEST>
+  </HEADER>
+  <BODY>
+    <EXPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>Balance Sheet</REPORTNAME>
+        <STATICVARIABLES>
+          <SVCURRENTCOMPANY>{self.COMPANY_ID}</SVCURRENTCOMPANY>
+          <SVTODATE>{to_date}</SVTODATE>
+          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+          <EXPLODEFLAG>Yes</EXPLODEFLAG>
+          <PARENTGROUP>{group_escaped}</PARENTGROUP>
         </STATICVARIABLES>
       </REQUESTDESC>
     </EXPORTDATA>
@@ -403,49 +520,60 @@ class TallyAPIClient:
         raw_xml = self._post(payload)
         if not raw_xml:
             return []
-        return self._parse_bs_xml(raw_xml)
+        return self._parse_bs_group_xml(raw_xml)
 
-    def _parse_bs_xml(self, raw_xml: str) -> list[LedgerBalance]:
+    def _parse_bs_group_xml(self, raw_xml: str) -> list[LedgerBalance]:
         """
-        Parses Tally Balance Sheet report XML.
+        Parses the sub-ledger drill-down XML for a BS group.
+        Sibling pattern: DSPACCNAME then DSPACCINFO.
 
-        Structure (different from Trial Balance):
-          <BSNAME><DSPACCNAME><DSPDISPNAME>Capital Account</DSPDISPNAME></DSPACCNAME></BSNAME>
-          <BSAMT><BSMAINAMT>100000.00</BSMAINAMT></BSAMT>
+        Structure:
+          <DSPACCNAME><DSPDISPNAME>Arbaz Capital</DSPDISPNAME></DSPACCNAME>
+          <DSPACCINFO>
+            <DSPCLDRAMTA></DSPCLDRAMTA>
+            <DSPCLCRAMTA>25000.00</DSPCLCRAMTA>
+          </DSPACCINFO>
 
-        Amounts are already signed: positive = Cr (liabilities), negative = Dr (assets).
-        No Dr/Cr suffix — we infer from sign.
+        Cr amounts → positive; Dr amounts → negative (assets).
         """
         try:
             root = ET.fromstring(_sanitize_xml(raw_xml))
         except ET.ParseError as exc:
-            logger.error("BS XML parse error: %s", exc)
+            logger.error("BS group XML parse error: %s", exc)
             return []
 
         results: list[LedgerBalance] = []
-        # Iterate sibling elements: BSNAME is followed immediately by BSAMT
         pending_name: str | None = None
         for elem in root:
-            if elem.tag == "BSNAME":
-                disp = elem.find(".//DSPDISPNAME")
+            if elem.tag == "DSPACCNAME":
+                disp = elem.find("DSPDISPNAME")
                 pending_name = disp.text.strip() if disp is not None and disp.text else None
-            elif elem.tag == "BSAMT" and pending_name:
-                main_amt = elem.find("BSMAINAMT")
-                raw_val = main_amt.text.strip() if main_amt is not None and main_amt.text else ""
-                if raw_val:
+            elif elem.tag == "DSPACCINFO" and pending_name:
+                dr_node = elem.find("DSPCLDRAMTA")
+                cr_node = elem.find("DSPCLCRAMTA")
+                dr_raw = dr_node.text.strip() if dr_node is not None and dr_node.text else ""
+                cr_raw = cr_node.text.strip() if cr_node is not None and cr_node.text else ""
+                value = 0.0
+                dr_cr = "Cr"
+                if cr_raw:
                     try:
-                        value = float(raw_val)
+                        value = float(cr_raw)
+                        dr_cr = "Cr"
                     except ValueError:
-                        value = 0.0
-                    if value != 0.0:
-                        dr_cr = "Dr" if value < 0 else "Cr"
-                        results.append(LedgerBalance(
-                            ledger_name=pending_name,
-                            amount=value,
-                            dr_cr=dr_cr,
-                        ))
+                        pass
+                elif dr_raw:
+                    try:
+                        value = -float(dr_raw)   # Dr = negative (asset)
+                        dr_cr = "Dr"
+                    except ValueError:
+                        pass
+                if value != 0.0:
+                    results.append(LedgerBalance(
+                        ledger_name=pending_name,
+                        amount=value,
+                        dr_cr=dr_cr,
+                    ))
                 pending_name = None
-
         return results
 
     def fetch_ledger_vouchers(self, ledger_name: str, from_date: str, to_date: str) -> list[dict]:

@@ -542,7 +542,8 @@ UNIT_GENERAL_CCS: list[str] = [
     "KN General", "Kn PentHouse", "Mysore General", "Cp General",
     "MC General", "HB General", "CMR General", "MN General",
     "HN-General", "Hennur General", "Mf General", "Kora Building 2 General",
-    "LF General", "Lang Ford General", "VN General", "General", "MK General",
+    "LF General", "Lang Ford General", "VN General", "MK General",
+    # "General" CC removed — it is company-level overhead, handled separately in post-loop block
 ]
 
 # ---------------------------------------------------------------------------

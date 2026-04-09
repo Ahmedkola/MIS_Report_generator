@@ -16,6 +16,7 @@ class UnitReportProcessor(BaseReportProcessor):
                 "indirect_income":  0.0,
                 "direct_exp":       {},
                 "indirect_exp":     {},
+                "interest":         0.0,
             }
 
         for item in self.raw_data:
@@ -134,6 +135,13 @@ class UnitReportProcessor(BaseReportProcessor):
                 building_maintenance_shares[disp] = maintenance_per_unit
         # ── End pre-fetch ──────────────────────────────────────────────────────
 
+        # Canonical indirect key names (normalise DB line_item spelling variants)
+        _INDIRECT_KEY_MAP: dict[str, str] = {
+            "Conveyance / Travelling Expenses":  "Conveyance/ Travelling Expenses",
+            "Conveyance/Travelling Expenses":    "Conveyance/ Travelling Expenses",
+            "Rates and Taxes":                   "Rates and taxes",
+        }
+
         for disp, cc, bldg in UNIT_COLUMNS:
             if cc is None:
                 all_ledgers = []
@@ -172,9 +180,13 @@ class UnitReportProcessor(BaseReportProcessor):
                             unit_data[disp]["direct_exp"].get(line, 0.0) + lamount
                         )
                 elif "Indirect" in group or (section == "Expenses" and "Direct" not in group):
-                    unit_data[disp]["indirect_exp"][line] = (
-                        unit_data[disp]["indirect_exp"].get(line, 0.0) + lamount
-                    )
+                    if "interest" in line.lower():
+                        unit_data[disp]["interest"] += lamount  # Excluded from EBITDA
+                    else:
+                        _key = _INDIRECT_KEY_MAP.get(line, line)
+                        unit_data[disp]["indirect_exp"][_key] = (
+                            unit_data[disp]["indirect_exp"].get(_key, 0.0) + lamount
+                        )
 
             # Apply General CC salary and consumables shares to eligible units
             if cc is not None and bldg != "General":
@@ -199,16 +211,105 @@ class UnitReportProcessor(BaseReportProcessor):
                         unit_data[disp]["direct_exp"].get("Maintenance", 0.0) + maintenance_share
                     )
 
+        # ── Post-loop: "General" CC — company-level overhead ──────────────────
+        # Fetch once; route to General Office column (with special handling for
+        # Salary A/c and Interest Paid), then distribute shares to units with rent.
+        _GENERAL_CC = "General"
+        gen_ledgers = self.api.fetch_cost_center_breakup(
+            self.from_date, self.to_date, _GENERAL_CC
+        )
+
+        # Totals to distribute across units with rent
+        _gen_office_admin  = 0.0
+        _gen_conveyance    = 0.0
+        _gen_prof_salary   = 0.0   # Professional Fees + Salary A/c combined
+
+        # Route full amounts into General Office column
+        _go = "General Office"
+        for _ledger in gen_ledgers:
+            _lname   = _ledger["ledger_name"]
+            _lamount = -_ledger["amount"] if _ledger["dr_cr"] == "Dr" else _ledger["amount"]
+            _lmap    = self.mappings.get(_lname)
+            _line    = (_lmap.line_item or _lname) if _lmap else _lname
+            _group   = (_lmap.report_group or "") if _lmap else ""
+            _section = (_lmap.report_section or "") if _lmap else ""
+
+            if _group == "Sales Accounts":
+                continue
+
+            # Capture distribution totals
+            if "office admin" in _line.lower() or "office admin" in _lname.lower():
+                _gen_office_admin += _lamount
+            elif "conveyance" in _line.lower() or "travelling" in _line.lower():
+                _gen_conveyance += _lamount
+            elif "professional" in _line.lower() or "professional" in _lname.lower():
+                _gen_prof_salary += _lamount
+            elif _line == "Salary":
+                _gen_prof_salary += _lamount   # GRM salary in General CC
+
+            # Route into General Office column
+            if _go in unit_data:
+                if _group == "Indirect Incomes":
+                    unit_data[_go]["indirect_income"] += _lamount
+                elif _section == "Direct Expenses" or _group == "Direct Expenses":
+                    if _line == "Salary":
+                        # GRM salary → indirect, combined as Professional Fees/GRM Salary
+                        unit_data[_go]["indirect_exp"]["Professional Fees/GRM Salary"] = (
+                            unit_data[_go]["indirect_exp"].get("Professional Fees/GRM Salary", 0.0) + _lamount
+                        )
+                    else:
+                        unit_data[_go]["direct_exp"][_line] = (
+                            unit_data[_go]["direct_exp"].get(_line, 0.0) + _lamount
+                        )
+                elif "Indirect" in _group or (_section == "Expenses" and "Direct" not in _group):
+                    if "interest" in _line.lower():
+                        unit_data[_go]["interest"] += _lamount
+                    elif "professional" in _line.lower() or "professional" in _lname.lower():
+                        unit_data[_go]["indirect_exp"]["Professional Fees/GRM Salary"] = (
+                            unit_data[_go]["indirect_exp"].get("Professional Fees/GRM Salary", 0.0) + _lamount
+                        )
+                    else:
+                        _key = _INDIRECT_KEY_MAP.get(_line, _line)
+                        unit_data[_go]["indirect_exp"][_key] = (
+                            unit_data[_go]["indirect_exp"].get(_key, 0.0) + _lamount
+                        )
+
+        # Distribute overhead shares to units with rent
+        _units_with_rent = [
+            disp for disp, d in unit_data.items()
+            if d.get("direct_exp", {}).get("Rent", 0.0) != 0.0
+            and d["cc"] is not None and d["building"] != "General"
+        ]
+        _n_rent = len(_units_with_rent)
+        if _n_rent > 0:
+            _office_share  = _gen_office_admin / _n_rent
+            _conv_share    = _gen_conveyance   / _n_rent
+            _prof_share    = _gen_prof_salary  / _n_rent
+            for _disp in _units_with_rent:
+                if _office_share != 0.0:
+                    unit_data[_disp]["indirect_exp"]["Office Admin"] = (
+                        unit_data[_disp]["indirect_exp"].get("Office Admin", 0.0) + _office_share
+                    )
+                if _conv_share != 0.0:
+                    unit_data[_disp]["indirect_exp"]["Conveyance/ Travelling Expenses"] = (
+                        unit_data[_disp]["indirect_exp"].get("Conveyance/ Travelling Expenses", 0.0) + _conv_share
+                    )
+                if _prof_share != 0.0:
+                    unit_data[_disp]["indirect_exp"]["Professional Fees/GRM Salary"] = (
+                        unit_data[_disp]["indirect_exp"].get("Professional Fees/GRM Salary", 0.0) + _prof_share
+                    )
+        # ── End General CC post-loop ───────────────────────────────────────────
+
         for disp, d in unit_data.items():
-            d["net_sales"]         = d["gross_sales"] - d["gst"] - d["host_fees"]
-            d["net_revenue"]       = d["net_sales"] + d["indirect_income"]
-            d["total_direct_exp"]  = sum(d["direct_exp"].values())
-            d["gross_profit"]      = d["net_sales"] + d["total_direct_exp"]
+            d["net_sales"]          = d["gross_sales"] - d["gst"] - d["host_fees"]
+            d["net_revenue"]        = d["net_sales"] + d["indirect_income"]
+            d["total_direct_exp"]   = sum(d["direct_exp"].values())
+            d["gross_profit"]       = d["net_sales"] + d["total_direct_exp"]
             d["total_indirect_exp"] = sum(d["indirect_exp"].values())
-            d["ebitda"]            = d["gross_profit"] + d["total_indirect_exp"]
-            d["interest"]          = 0.0
-            d["depreciation"]      = 0.0
-            d["pbt"]               = d["ebitda"]
+            d["ebitda"]             = d["gross_profit"] + d["total_indirect_exp"]
+            # d["interest"] already accumulated above (negative = expense)
+            d["depreciation"]       = 0.0
+            d["pbt"]                = d["ebitda"] + d["interest"]  # interest is negative → reduces PBT
 
         all_direct_lines:   list[str] = []
         all_indirect_lines: list[str] = []

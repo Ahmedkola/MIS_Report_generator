@@ -76,28 +76,43 @@ class StandardReportProcessor(BaseReportProcessor):
 
         bs_report["sections"] = {}
         bs_group_section = {
-            "Capital Account":       ("Equity & Liabilities", "Capital Account"),
-            "Loans (Liability)":     ("Equity & Liabilities", "Loans (Liability)"),
-            "Current Liabilities":   ("Equity & Liabilities", "Current Liabilities"),
-            "Suspense A/c":          ("Equity & Liabilities", "Suspense"),
-            "Profit & Loss A/c":     ("Equity & Liabilities", "Profit & Loss A/c"),
-            "Fixed Assets":          ("Assets",               "Fixed Assets"),
-            "Current Assets":        ("Assets",               "Current Assets"),
-            "Loans & Advances (Asset)": ("Assets",            "Current Assets"),
-            "Investments":           ("Assets",               "Investments"),
-            "Misc. Expenses (Asset)": ("Assets",              "Misc. Expenses"),
+            "Capital Account":          ("Equity & Liabilities", "Capital Account"),
+            "Loans (Liability)":        ("Equity & Liabilities", "Loans (Liability)"),
+            "Current Liabilities":      ("Equity & Liabilities", "Current Liabilities"),
+            "Suspense A/c":             ("Equity & Liabilities", "Suspense"),
+            "Profit & Loss A/c":        ("Equity & Liabilities", "Profit & Loss A/c"),
+            "Fixed Assets":             ("Assets",               "Fixed Assets"),
+            "Current Assets":           ("Assets",               "Current Assets"),
+            "Loans & Advances (Asset)": ("Assets",               "Current Assets"),
+            "Investments":              ("Assets",               "Investments"),
+            "Misc. Expenses (Asset)":   ("Assets",               "Misc. Expenses"),
         }
+        # fetch_balance_sheet now returns {group_name: {"total": float, "items": [LedgerBalance]}}
         bs_raw = self.api.fetch_balance_sheet(self.to_date)
-        for item in bs_raw:
-            group_name = item["ledger_name"]
-            amount = item["amount"]
+        for group_name, group_data in bs_raw.items():
+            total  = group_data["total"]
+            items  = group_data["items"]   # list[LedgerBalance]
+
             if group_name in bs_group_section:
                 section, group = bs_group_section[group_name]
-                self._add_to_report(bs_report, section, group, group_name, amount)
-            elif amount > 0:
-                self._add_to_report(bs_report, "Equity & Liabilities", "Other Liabilities", group_name, amount)
+            elif total > 0:
+                section, group = "Equity & Liabilities", "Other Liabilities"
             else:
-                self._add_to_report(bs_report, "Assets", "Other Assets", group_name, amount)
+                section, group = "Assets", "Other Assets"
+
+            # Create the group with the overall total
+            self._add_to_report(bs_report, section, group, group_name, total)
+
+            # Populate individual ledger items (replace the self-entry added by _add_to_report)
+            if items:
+                rg = bs_report["sections"][section][group]
+                rg["items"] = {}   # clear the group-name self-entry
+                for item in items:
+                    rg["items"][item["ledger_name"]] = {
+                        "name":      item["ledger_name"],
+                        "amount":    item["amount"],
+                        "breakdown": None,
+                    }
 
         return {
             "pnl": pnl_report,
