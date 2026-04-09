@@ -1,7 +1,7 @@
 import re
 from .base import BaseReportProcessor
 from mis_engine.models import LedgerMapping
-from schemas import UNIT_COLUMNS, UNIT_GENERAL_CCS
+from schemas import UNIT_COLUMNS, UNIT_GENERAL_CCS, BUILDING_GENERAL_CC_MAPPING
 
 class UnitReportProcessor(BaseReportProcessor):
     def process(self) -> dict:
@@ -77,6 +77,63 @@ class UnitReportProcessor(BaseReportProcessor):
         for d in unit_data.values():
             d["gross_sales"] = d["gross_sales"] + d["gst"] + d["host_fees"]
 
+        # ── Pre-fetch: General CC salary and consumables shares per unit ───────
+        building_salary_shares:      dict[str, float] = {}
+        building_consumables_shares: dict[str, float] = {}
+        building_electricity_shares: dict[str, float] = {}
+        building_maintenance_shares: dict[str, float] = {}
+
+        # Count eligible units per building (exclude cc=None, bldg="General", penthouse)
+        eligible_units_per_building: dict[str, list[str]] = {}
+        for disp, cc, bldg in UNIT_COLUMNS:
+            if cc is None or bldg == "General":
+                continue
+            if "penthouse" in cc.lower():
+                continue
+            eligible_units_per_building.setdefault(bldg, []).append(disp)
+
+        # Fetch each building's General CC once; compute per-unit salary & consumables
+        for bldg, general_cc in BUILDING_GENERAL_CC_MAPPING.items():
+            if general_cc is None:
+                continue
+            eligible_disps = eligible_units_per_building.get(bldg, [])
+            num_units = len(eligible_disps)
+            if num_units == 0:
+                continue
+
+            gen_ledgers = self.api.fetch_cost_center_breakup(
+                self.from_date, self.to_date, general_cc
+            )
+            total_salary      = 0.0
+            total_consumables = 0.0
+            total_electricity = 0.0
+            total_maintenance = 0.0
+            for ledger in gen_ledgers:
+                lamount = -ledger["amount"] if ledger["dr_cr"] == "Dr" else ledger["amount"]
+                lmap = self.mappings.get(ledger["ledger_name"])
+                if not lmap:
+                    continue
+                line = lmap.line_item or ledger["ledger_name"]
+                if line == "Salary":
+                    total_salary += lamount
+                elif line == "Consumables":
+                    total_consumables += lamount
+                elif line == "Electricity":
+                    total_electricity += lamount
+                elif line == "Maintenance":
+                    total_maintenance += lamount
+
+            salary_per_unit      = total_salary      / num_units
+            consumables_per_unit = total_consumables / num_units
+            electricity_per_unit = total_electricity / num_units
+            maintenance_per_unit = total_maintenance / num_units
+            for disp in eligible_disps:
+                building_salary_shares[disp]      = salary_per_unit
+                building_consumables_shares[disp] = consumables_per_unit
+                building_electricity_shares[disp] = electricity_per_unit
+                building_maintenance_shares[disp] = maintenance_per_unit
+        # ── End pre-fetch ──────────────────────────────────────────────────────
+
         for disp, cc, bldg in UNIT_COLUMNS:
             if cc is None:
                 all_ledgers = []
@@ -108,12 +165,38 @@ class UnitReportProcessor(BaseReportProcessor):
                 if group == "Indirect Incomes":
                     unit_data[disp]["indirect_income"] += lamount
                 elif section == "Direct Expenses" or group == "Direct Expenses":
-                    unit_data[disp]["direct_exp"][line] = (
-                        unit_data[disp]["direct_exp"].get(line, 0.0) + lamount
-                    )
+                    if line == "Salary":
+                        pass  # Salary comes from General CC only; skip per-unit CC salary
+                    else:
+                        unit_data[disp]["direct_exp"][line] = (
+                            unit_data[disp]["direct_exp"].get(line, 0.0) + lamount
+                        )
                 elif "Indirect" in group or (section == "Expenses" and "Direct" not in group):
                     unit_data[disp]["indirect_exp"][line] = (
                         unit_data[disp]["indirect_exp"].get(line, 0.0) + lamount
+                    )
+
+            # Apply General CC salary and consumables shares to eligible units
+            if cc is not None and bldg != "General":
+                salary_share = building_salary_shares.get(disp, 0.0)
+                if salary_share != 0.0:
+                    unit_data[disp]["direct_exp"]["Salary"] = (
+                        unit_data[disp]["direct_exp"].get("Salary", 0.0) + salary_share
+                    )
+                consumables_share = building_consumables_shares.get(disp, 0.0)
+                if consumables_share != 0.0:
+                    unit_data[disp]["direct_exp"]["Consumables"] = (
+                        unit_data[disp]["direct_exp"].get("Consumables", 0.0) + consumables_share
+                    )
+                electricity_share = building_electricity_shares.get(disp, 0.0)
+                if electricity_share != 0.0:
+                    unit_data[disp]["direct_exp"]["Electricity"] = (
+                        unit_data[disp]["direct_exp"].get("Electricity", 0.0) + electricity_share
+                    )
+                maintenance_share = building_maintenance_shares.get(disp, 0.0)
+                if maintenance_share != 0.0:
+                    unit_data[disp]["direct_exp"]["Maintenance"] = (
+                        unit_data[disp]["direct_exp"].get("Maintenance", 0.0) + maintenance_share
                     )
 
         for disp, d in unit_data.items():
