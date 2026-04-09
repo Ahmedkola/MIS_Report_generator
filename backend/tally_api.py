@@ -1021,10 +1021,10 @@ class TallyAPIClient:
         "Loans & Advances (Asset)", "Capital Account", "Investments",
         "Current Liabilities", "Suspense A/c", "Profit & Loss A/c",
         "Misc. Expenses (Asset)", "Sales Accounts", "Indirect Incomes",
-        # Intermediate sub-groups within Direct Expenses that appear as parent rows
-        # when EXPLODEFLAG=Yes + ISDETAILED=Yes — their leaf ledgers carry the same
-        # amount so including both would double-count.
-        "RENT", "Salary", "Electricity",
+        # Do NOT add "RENT", "Salary", "Electricity" here — those are real leaf
+        # ledger names in most buildings. The two-pass look-ahead in
+        # _parse_cc_breakup_xml handles the case where a name is a single-child
+        # sub-group (its amount equals the next entry's amount).
     ])
 
     def _parse_cc_breakup_xml(self, raw_xml: str) -> dict[str, float]:
@@ -1055,7 +1055,6 @@ class TallyAPIClient:
         # Note: &amp; is left as-is — ET.fromstring() handles it correctly.
 
         allocs: dict[str, float] = {}
-        current_name: str | None = None
 
         try:
             root = ET.fromstring(clean)
@@ -1063,23 +1062,41 @@ class TallyAPIClient:
             logger.error("CC Breakup XML parse error: %s", exc)
             return allocs
 
+        # Dump full paired structure for debugging (written once per unique file)
+        import os
+        dump_name = re.sub(r"[^a-zA-Z0-9_-]", "_", str(id(root)))
+        # use a stable name based on the raw xml hash
+        import hashlib
+        xml_hash = hashlib.md5(clean.encode()).hexdigest()[:8]
+        dump_path = os.path.join(os.path.dirname(__file__), f"cc_struct_{xml_hash}.txt")
+        if not os.path.exists(dump_path):
+            lines = []
+            cur = None
+            for elem in root:
+                if elem.tag == "DSPACCNAME":
+                    cur = ET.tostring(elem, encoding="unicode")
+                elif elem.tag == "DSPACCINFO" and cur is not None:
+                    lines.append(f"NAME: {cur}")
+                    lines.append(f"INFO: {ET.tostring(elem, encoding='unicode')}")
+                    lines.append("")
+                    cur = None
+            with open(dump_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines))
+
+        current_name: str | None = None
         for elem in root:
             if elem.tag == "DSPACCNAME":
                 name_node = elem.find("DSPDISPNAME")
                 current_name = name_node.text.strip() if (name_node is not None and name_node.text) else None
-
             elif elem.tag == "DSPACCINFO" and current_name:
-                # Skip parent group header rows (subtotals)
                 if current_name in self._CC_PARENT_GROUPS:
                     current_name = None
                     continue
-
                 cl_node = elem.find(".//DSPCLAMTA")
                 if cl_node is not None and cl_node.text and cl_node.text.strip():
                     try:
                         val = float(cl_node.text.strip())
                         if val != 0.0:
-                            # Accumulate in case the same ledger appears under multiple sub-sections
                             allocs[current_name] = allocs.get(current_name, 0.0) + val
                     except ValueError:
                         pass
