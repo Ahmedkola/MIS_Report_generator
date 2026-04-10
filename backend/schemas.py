@@ -576,3 +576,29 @@ BUILDING_GENERAL_CC_MAPPING: dict[str, str | None] = {
     "LRP": "LRP General"
 }
 
+# Maps building_group → the exact Tally ledger name that holds that building's rent.
+# Used to fetch total rent from the trial balance and distribute equally per unit.
+# None = no dedicated rent ledger; per-unit CC breakup is used as fallback.
+BUILDING_RENT_LEDGER: dict[str, str | None] = {
+    "JPN 202":         "JPN 202 Rent A/c",
+    "Koramangala":     "Kormangala 1 Rent A/c",
+    "EEE":             "East End Enclave Rent",
+    "E-City":          "ECity Rent",
+    "Kalyan Nagar":    "Kalyan Nagar -Rent A/c",
+    "Mysore":          "Mysore Rent A/c",
+    "Coles Park":      "Coles Park Rent A/c",
+    "Mahaveer Celese": "Mahaveer Rent A/c",
+    "Hebbal":          "Hebbal Rent A/c",
+    "CMR":             "Kasturi Nagar Rent A/c",
+    "Prestige":        "Rent Waterford",
+    "Manyata":         "Manyata Rent A/c",
+    "Hennur":          "Hennur Rent",
+    "Mysore Frenza":   "Mysore Firenza Rent A/C",
+    "Kora-2":          "Kormangala 2 Rent A/c",
+    "JPN-Hotel":       "JPN Hotel Rent A/c",
+    "Brigade":         "Brigade Eldorado Rent",
+    "Lang Ford":       "Langford Rent A/c",
+    "Viman Nagar":     "Viman Nagar Rent",
+    "LRP":             None,
+}
+

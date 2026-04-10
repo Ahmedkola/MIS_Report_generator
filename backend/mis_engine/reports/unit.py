@@ -1,7 +1,7 @@
 import re
 from .base import BaseReportProcessor
 from mis_engine.models import LedgerMapping
-from schemas import UNIT_COLUMNS, UNIT_GENERAL_CCS, BUILDING_GENERAL_CC_MAPPING
+from schemas import UNIT_COLUMNS, UNIT_GENERAL_CCS, BUILDING_GENERAL_CC_MAPPING, BUILDING_RENT_LEDGER
 
 class UnitReportProcessor(BaseReportProcessor):
     def process(self) -> dict:
@@ -23,9 +23,6 @@ class UnitReportProcessor(BaseReportProcessor):
             name   = item["ledger_name"]
             amount = item["amount"]
             if amount <= 0:
-                continue
-            mapping = self.mappings.get(name)
-            if not mapping or mapping.report_section != "Excluded":
                 continue
             if "sales" not in name.lower():
                 continue
@@ -92,6 +89,27 @@ class UnitReportProcessor(BaseReportProcessor):
             if "penthouse" in cc.lower():
                 continue
             eligible_units_per_building.setdefault(bldg, []).append(disp)
+
+        # ── Pre-fetch: building-level rent from trial balance ─────────────────
+        # Index trial balance by ledger name for O(1) lookup (no extra API call)
+        _tb_by_name = {lb["ledger_name"]: lb for lb in self.raw_data}
+
+        building_rent_shares: dict[str, float] = {}
+        for bldg, rent_ledger in BUILDING_RENT_LEDGER.items():
+            if rent_ledger is None:
+                continue
+            eligible_disps = eligible_units_per_building.get(bldg, [])
+            num_units = len(eligible_disps)
+            if num_units == 0:
+                continue
+            tb_entry = _tb_by_name.get(rent_ledger)
+            if tb_entry is None or tb_entry["amount"] == 0:
+                continue  # ledger not found or zero → fall back to CC breakup
+            # trial balance amount is already signed (negative = Dr/expense)
+            per_unit = tb_entry["amount"] / num_units
+            for disp in eligible_disps:
+                building_rent_shares[disp] = per_unit
+        # ── End rent pre-fetch ────────────────────────────────────────────────
 
         # Fetch each building's General CC once; compute per-unit salary & consumables
         for bldg, general_cc in BUILDING_GENERAL_CC_MAPPING.items():
@@ -210,6 +228,13 @@ class UnitReportProcessor(BaseReportProcessor):
                     unit_data[disp]["direct_exp"]["Maintenance"] = (
                         unit_data[disp]["direct_exp"].get("Maintenance", 0.0) + maintenance_share
                     )
+
+            # Override Rent with building-level ledger value (avoids CC breakup double-count).
+            # Falls back to CC breakup value if no pre-fetched share exists.
+            if cc is not None and bldg != "General" and disp in building_rent_shares:
+                rent_share = building_rent_shares[disp]
+                if rent_share != 0.0:
+                    unit_data[disp]["direct_exp"]["Rent"] = rent_share
 
         # ── Post-loop: "General" CC — company-level overhead ──────────────────
         # Fetch once; route to General Office column (with special handling for
@@ -371,6 +396,23 @@ class UnitReportProcessor(BaseReportProcessor):
                 if disp == target:
                     return disp
             return None
+
+        # Lang Ford: "Lang Ford 1F Sales A/c" or "Lang Ford 1 F Sales A/c" → "LF 1"
+        lf_m = re.search(r"lang\s*ford\s*(\d+)\s*f", name_lower)
+        if lf_m:
+            target = f"LF {lf_m.group(1)}"
+            for disp, _, _ in UNIT_COLUMNS:
+                if disp == target:
+                    return disp
+            return None
+
+        # Brigade: "ED J 701 Sales A/c" → "ED 701" (cc "ED 701")
+        ed_m = re.search(r"ed\b.*?\b(\d{3})\b", name_lower)
+        if ed_m:
+            target = f"ED {ed_m.group(1)}"
+            for disp, _, _ in UNIT_COLUMNS:
+                if disp == target:
+                    return disp
 
         def _norm(s: str) -> str:
             return re.sub(r"[\s\-_]+", "", s.lower())
