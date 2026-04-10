@@ -1,10 +1,43 @@
 import re
 from .base import BaseReportProcessor
-from mis_engine.models import LedgerMapping
-from schemas import UNIT_COLUMNS, UNIT_GENERAL_CCS, BUILDING_GENERAL_CC_MAPPING, BUILDING_RENT_LEDGER
+from mis_engine.models import LedgerMapping, Building, CostCenter
 
 class UnitReportProcessor(BaseReportProcessor):
     def process(self) -> dict:
+        # ── Load config from DB ────────────────────────────────────────────────
+        ccs = (CostCenter.objects
+               .filter(is_active=True)
+               .select_related('building')
+               .order_by('building__column_order', 'column_order'))
+
+        self._unit_columns = [
+            (cc.display_name, cc.tally_cc,
+             cc.building.display_name if cc.building else "General")
+            for cc in ccs
+        ]
+        UNIT_COLUMNS = self._unit_columns
+
+        buildings = Building.objects.filter(is_active=True).order_by('column_order')
+        BUILDING_GENERAL_CC_MAPPING = {b.display_name: b.general_cc for b in buildings}
+        BUILDING_RENT_LEDGER        = {b.display_name: b.rent_ledger for b in buildings}
+
+        # eligible_units_per_building: built from DB flags, same logic as before
+        eligible_units_per_building: dict[str, list[str]] = {}
+        for cc_obj in ccs:
+            if cc_obj.tally_cc is None or cc_obj.is_excluded_from_split:
+                continue
+            bldg_name = cc_obj.building.display_name if cc_obj.building else "General"
+            if bldg_name == "General":
+                continue
+            eligible_units_per_building.setdefault(bldg_name, []).append(cc_obj.display_name)
+
+        UNIT_GENERAL_CCS = [
+            cc_obj.tally_cc for cc_obj in ccs
+            if cc_obj.tally_cc and cc_obj.building
+            and cc_obj.building.general_cc == cc_obj.tally_cc
+        ]
+        # ── End DB load ────────────────────────────────────────────────────────
+
         unit_data: dict[str, dict] = {}
         for disp, cc, bldg in UNIT_COLUMNS:
             unit_data[disp] = {
@@ -81,14 +114,7 @@ class UnitReportProcessor(BaseReportProcessor):
         building_electricity_shares: dict[str, float] = {}
         building_maintenance_shares: dict[str, float] = {}
 
-        # Count eligible units per building (exclude cc=None, bldg="General", penthouse)
-        eligible_units_per_building: dict[str, list[str]] = {}
-        for disp, cc, bldg in UNIT_COLUMNS:
-            if cc is None or bldg == "General":
-                continue
-            if "penthouse" in cc.lower():
-                continue
-            eligible_units_per_building.setdefault(bldg, []).append(disp)
+        # eligible_units_per_building already built from DB flags above
 
         # ── Pre-fetch: building-level rent from trial balance ─────────────────
         # Index trial balance by ledger name for O(1) lookup (no extra API call)
@@ -377,13 +403,14 @@ class UnitReportProcessor(BaseReportProcessor):
         }
 
     def _match_sales_ledger_to_unit(self, ledger_name: str) -> str | None:
+        unit_columns = getattr(self, '_unit_columns', [])
         name_lower = ledger_name.lower()
 
         kora2_m = re.search(r"kora\s*2\s+(\d+)", name_lower)
         if kora2_m:
             num = kora2_m.group(1)
             target = f"Koramangala-New {num}"
-            for disp, _, _ in UNIT_COLUMNS:
+            for disp, _, _ in unit_columns:
                 if disp == target:
                     return disp
             return None
@@ -392,7 +419,7 @@ class UnitReportProcessor(BaseReportProcessor):
         if kora_small_m:
             num = kora_small_m.group(1)
             target = f"Koramangala-{num}"
-            for disp, cc, _ in UNIT_COLUMNS:
+            for disp, cc, _ in unit_columns:
                 if disp == target:
                     return disp
             return None
@@ -401,7 +428,7 @@ class UnitReportProcessor(BaseReportProcessor):
         lf_m = re.search(r"lang\s*ford\s*(\d+)\s*f", name_lower)
         if lf_m:
             target = f"LF {lf_m.group(1)}"
-            for disp, _, _ in UNIT_COLUMNS:
+            for disp, _, _ in unit_columns:
                 if disp == target:
                     return disp
             return None
@@ -410,7 +437,7 @@ class UnitReportProcessor(BaseReportProcessor):
         ed_m = re.search(r"ed\b.*?\b(\d{3})\b", name_lower)
         if ed_m:
             target = f"ED {ed_m.group(1)}"
-            for disp, _, _ in UNIT_COLUMNS:
+            for disp, _, _ in unit_columns:
                 if disp == target:
                     return disp
 
@@ -420,7 +447,7 @@ class UnitReportProcessor(BaseReportProcessor):
         name_norm = _norm(ledger_name)
 
         candidates = sorted(
-            [(d, c, b) for d, c, b in UNIT_COLUMNS if c],
+            [(d, c, b) for d, c, b in unit_columns if c],
             key=lambda x: len(x[1]),
             reverse=True,
         )

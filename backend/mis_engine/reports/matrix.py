@@ -1,8 +1,35 @@
-from schemas import MatrixReport, MatrixRow, COST_CENTERS, COST_CENTER_GROUPS, UNIT_COLUMNS, BUILDING_GENERAL_CC_MAPPING
+from schemas import MatrixReport, MatrixRow
+from mis_engine.models import Building, CostCenter
 from .base import BaseReportProcessor
 
 class MatrixReportProcessor(BaseReportProcessor):
     def process(self) -> list[MatrixReport]:
+        # ── Load config from DB ────────────────────────────────────────────────
+        buildings = (Building.objects
+                     .filter(is_active=True)
+                     .prefetch_related('cost_centers')
+                     .order_by('column_order'))
+
+        COST_CENTERS = [b.display_name for b in buildings] + ["Total"]
+
+        COST_CENTER_GROUPS = {
+            b.display_name: [
+                cc.tally_cc
+                for cc in b.cost_centers.filter(is_active=True)
+                if cc.tally_cc
+            ]
+            for b in buildings
+        }
+
+        UNIT_COLUMNS = [
+            (cc.display_name, cc.tally_cc, b.display_name)
+            for b in buildings
+            for cc in b.cost_centers.filter(is_active=True)
+        ]
+
+        BUILDING_GENERAL_CC_MAPPING = {b.display_name: b.general_cc for b in buildings}
+        # ── End DB load ────────────────────────────────────────────────────────
+
         matrix_rows = {
             "Gross Sales":      { c: 0.0 for c in COST_CENTERS },
             "Net Sales":        { c: 0.0 for c in COST_CENTERS },
