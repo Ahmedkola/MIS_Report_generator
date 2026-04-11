@@ -80,6 +80,9 @@ class CostCenter(models.Model):
         help_text="Order within the building (left-to-right in unit-wise table).")
     is_excluded_from_split = models.BooleanField(default=False,
         help_text="True for Penthouse and General virtual columns — skip in salary/rent splits.")
+    rent_weight  = models.FloatField(default=1.0,
+        help_text="Relative rent share weight within the building. Default 1.0 = equal split. "
+                  "E.g. set 2.2 for a unit that pays 55k when others pay 25k.")
     is_active    = models.BooleanField(default=True)
 
     class Meta:

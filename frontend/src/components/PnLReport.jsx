@@ -1,4 +1,4 @@
-import { formatCurrency } from '../utils/formatters'
+import { formatCurrency, formatPeriod } from '../utils/formatters'
 
 // ─── Which groups belong to which section of the T-account ───────────────────
 // Trading Dr  = Direct Expenses
@@ -118,7 +118,7 @@ export default function PnLReport({ report }) {
           {report.company}
         </p>
         <p className="text-[11px] text-slate-500 mt-0.5">
-          Profit &amp; Loss Account &nbsp;·&nbsp; {report.period}
+          Profit &amp; Loss Account &nbsp;·&nbsp; {formatPeriod(report.period)}
         </p>
       </div>
 

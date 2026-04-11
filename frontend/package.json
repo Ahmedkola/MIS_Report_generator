@@ -4,10 +4,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && python postbuild.py",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontsource/inter": "^5.2.8",
+    "@fontsource/jetbrains-mono": "^5.2.8",
     "lucide-react": "^1.8.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -19,6 +21,7 @@
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.14",
-    "vite": "^5.4.10"
+    "vite": "^5.4.10",
+    "vite-plugin-singlefile": "^2.3.2"
   }
 }

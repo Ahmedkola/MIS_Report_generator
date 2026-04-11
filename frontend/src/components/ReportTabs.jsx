@@ -1,10 +1,11 @@
 import { NavLink, useLocation } from 'react-router-dom'
 
 const TABS = [
-  { id: 'pnl', label: 'Consolidated P&L', to: '/pnl' },
-  { id: 'balance_sheet', label: 'Balance Sheet', to: '/balance-sheet' },
-  { id: 'matrix', label: 'Building-Wise Matrix', to: '/matrix' },
-  { id: 'unit', label: 'Unit-Wise P&L', to: '/unit-wise' },
+  { id: 'pnl',        label: 'Consolidated P&L',    to: '/pnl' },
+  { id: 'balance_sheet', label: 'Balance Sheet',    to: '/balance-sheet' },
+  { id: 'matrix',     label: 'Building-Wise Matrix', to: '/matrix' },
+  { id: 'unit',       label: 'Unit-Wise P&L',        to: '/unit-wise' },
+  { id: 'cash_flow',  label: 'Cash Flow Statement',  to: '/cash-flow' },
 ]
 
 export default function ReportTabs() {

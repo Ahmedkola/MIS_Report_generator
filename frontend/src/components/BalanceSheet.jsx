@@ -1,4 +1,4 @@
-import { formatCurrency } from '../utils/formatters'
+import { formatCurrency, formatPeriod } from '../utils/formatters'
 
 function fmt(v) {
   return v != null ? formatCurrency(Math.abs(v)) : '—'
@@ -89,7 +89,7 @@ export default function BalanceSheet({ report }) {
           {report.company}
         </p>
         <p className="text-[11px] text-slate-500 mt-0.5">
-          Balance Sheet &nbsp;·&nbsp; {report.period}
+          Balance Sheet &nbsp;·&nbsp; {formatPeriod(report.period)}
         </p>
       </div>
 

@@ -949,6 +949,135 @@ class TallyAPIClient:
 
         return hierarchy, ledgers
 
+    def fetch_cash_flow_breakup(self, from_date: str, to_date: str) -> dict:
+        """
+        Calls Tally's 'Cash Flow Breakup' report for the period.
+
+        Returns a dict of the form:
+          {
+            group_name: {
+              "inflow":  float,   # cash received (always >= 0)
+              "outflow": float,   # cash paid     (always >= 0)
+              "net":     float,   # inflow - outflow  (positive = net inflow)
+              "ledgers": {ledger_name: {"inflow": float, "outflow": float, "net": float}}
+            }
+          }
+
+        XML structure (CFBMAINAMT = group total, CFBSUBAMT = ledger detail):
+          Negative value → cash inflow  (money came in)
+          Positive value → cash outflow (money went out)
+        Groups appear TWICE in the XML: once for inflow block, once for outflow block.
+        """
+        logger.info("Fetching Cash Flow Breakup: %s → %s", from_date, to_date)
+        payload = f"""<ENVELOPE>
+  <HEADER>
+    <TALLYREQUEST>Export Data</TALLYREQUEST>
+  </HEADER>
+  <BODY>
+    <EXPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>Cash Flow Breakup</REPORTNAME>
+        <STATICVARIABLES>
+          <SVCURRENTCOMPANY>{self.COMPANY_ID}</SVCURRENTCOMPANY>
+          <SVFROMDATE>{from_date}</SVFROMDATE>
+          <SVTODATE>{to_date}</SVTODATE>
+          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+        </STATICVARIABLES>
+      </REQUESTDESC>
+    </EXPORTDATA>
+  </BODY>
+</ENVELOPE>"""
+
+        # Tally returns CFB report as UTF-16 LE; use raw bytes for safe decoding
+        raw_bytes = self._post_raw(payload)
+        if not raw_bytes:
+            return {}
+        try:
+            raw_xml = raw_bytes.decode("utf-16")
+        except (UnicodeDecodeError, ValueError):
+            raw_xml = raw_bytes.decode("utf-8", errors="replace")
+        return self._parse_cash_flow_xml(raw_xml)
+
+    def _parse_cash_flow_xml(self, raw_xml: str) -> dict:
+        """
+        Parses the Cash Flow Breakup XML.
+
+        Structure per entry (repeating pairs):
+          <DSPACCNAME><DSPDISPNAME>Group or Ledger</DSPDISPNAME></DSPACCNAME>
+          <CFBAMT>
+            <CFBSUBAMT>[-]amount or empty</CFBSUBAMT>   ← ledger row
+            <CFBMAINAMT>[-]amount or empty</CFBMAINAMT>  ← group row
+          </CFBAMT>
+
+        Sign: negative = inflow, positive = outflow.
+        Groups appear twice (once per direction block); we accumulate both.
+        """
+        clean = re.sub(
+            r"[^\x09\x0A\x0D\x20-\uD7FF\uE000-\uFFFD\U00010000-\U0010FFFF]",
+            "", raw_xml.lstrip("\ufeff"),
+        )
+        clean = re.sub(r"&#[xX]0*([0-8b-cB-Ce-fE-F]|1[0-9a-fA-F]);", "", clean)
+        clean = re.sub(r"&#0*([0-8]|1[1-2]|1[4-9]|2[0-9]|3[0-1]);", "", clean)
+
+        try:
+            root = ET.fromstring(clean)
+        except ET.ParseError as exc:
+            logger.error("Cash Flow XML parse error: %s", exc)
+            return {}
+
+        groups: dict = {}
+        current_group: str | None = None
+        current_name: str | None = None
+
+        for elem in root:
+            if elem.tag == "DSPACCNAME":
+                node = elem.find("DSPDISPNAME")
+                current_name = node.text.strip() if (node is not None and node.text) else None
+
+            elif elem.tag == "CFBAMT" and current_name:
+                main_node = elem.find("CFBMAINAMT")
+                sub_node  = elem.find("CFBSUBAMT")
+
+                main_txt = (main_node.text or "").strip() if main_node is not None else ""
+                sub_txt  = (sub_node.text  or "").strip() if sub_node  is not None else ""
+
+                if main_txt:
+                    # Group header row
+                    current_group = current_name
+                    if current_group not in groups:
+                        groups[current_group] = {"inflow": 0.0, "outflow": 0.0, "ledgers": {}}
+                    try:
+                        val = float(main_txt)
+                        if val < 0:
+                            groups[current_group]["inflow"]  += abs(val)
+                        else:
+                            groups[current_group]["outflow"] += val
+                    except ValueError:
+                        pass
+
+                elif sub_txt and current_group:
+                    # Ledger detail row
+                    if current_name not in groups[current_group]["ledgers"]:
+                        groups[current_group]["ledgers"][current_name] = {"inflow": 0.0, "outflow": 0.0}
+                    try:
+                        val = float(sub_txt)
+                        if val < 0:
+                            groups[current_group]["ledgers"][current_name]["inflow"]  += abs(val)
+                        else:
+                            groups[current_group]["ledgers"][current_name]["outflow"] += val
+                    except ValueError:
+                        pass
+
+                current_name = None
+
+        # Compute net (inflow - outflow) for each group and ledger
+        for gdata in groups.values():
+            gdata["net"] = gdata["inflow"] - gdata["outflow"]
+            for ldata in gdata["ledgers"].values():
+                ldata["net"] = ldata["inflow"] - ldata["outflow"]
+
+        return groups
+
     def fetch_cost_center_breakup(self, from_date: str, to_date: str, cost_center_name: str) -> list[LedgerBalance]:
         """
         Queries Tally's Cost Centre Breakup report DIRECTLY for a specific cost center.
@@ -1061,27 +1190,6 @@ class TallyAPIClient:
         except ET.ParseError as exc:
             logger.error("CC Breakup XML parse error: %s", exc)
             return allocs
-
-        # Dump full paired structure for debugging (written once per unique file)
-        import os
-        dump_name = re.sub(r"[^a-zA-Z0-9_-]", "_", str(id(root)))
-        # use a stable name based on the raw xml hash
-        import hashlib
-        xml_hash = hashlib.md5(clean.encode()).hexdigest()[:8]
-        dump_path = os.path.join(os.path.dirname(__file__), f"cc_struct_{xml_hash}.txt")
-        if not os.path.exists(dump_path):
-            lines = []
-            cur = None
-            for elem in root:
-                if elem.tag == "DSPACCNAME":
-                    cur = ET.tostring(elem, encoding="unicode")
-                elif elem.tag == "DSPACCINFO" and cur is not None:
-                    lines.append(f"NAME: {cur}")
-                    lines.append(f"INFO: {ET.tostring(elem, encoding='unicode')}")
-                    lines.append("")
-                    cur = None
-            with open(dump_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(lines))
 
         current_name: str | None = None
         for elem in root:

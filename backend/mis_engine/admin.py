@@ -13,7 +13,7 @@ class LedgerMappingAdmin(admin.ModelAdmin):
 class CostCenterInline(admin.TabularInline):
     model  = CostCenter
     extra  = 0
-    fields = ('display_name', 'tally_cc', 'column_order', 'is_excluded_from_split', 'is_active')
+    fields = ('display_name', 'tally_cc', 'column_order', 'rent_weight', 'is_excluded_from_split', 'is_active')
 
 
 @admin.register(Building)
@@ -27,8 +27,8 @@ class BuildingAdmin(admin.ModelAdmin):
 @admin.register(CostCenter)
 class CostCenterAdmin(admin.ModelAdmin):
     list_display  = ('display_name', 'building', 'tally_cc', 'column_order',
-                     'is_excluded_from_split', 'is_active')
-    list_editable = ('column_order', 'is_excluded_from_split', 'is_active')
+                     'rent_weight', 'is_excluded_from_split', 'is_active')
+    list_editable = ('column_order', 'rent_weight', 'is_excluded_from_split', 'is_active')
     list_filter   = ('building', 'is_active', 'is_excluded_from_split')
     search_fields = ('display_name', 'tally_cc')
     ordering      = ('building__column_order', 'column_order')

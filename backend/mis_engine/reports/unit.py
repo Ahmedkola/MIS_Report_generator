@@ -22,7 +22,9 @@ class UnitReportProcessor(BaseReportProcessor):
         BUILDING_RENT_LEDGER        = {b.display_name: b.rent_ledger for b in buildings}
 
         # eligible_units_per_building: built from DB flags, same logic as before
+        # Also track rent_weight per display_name for weighted rent splits.
         eligible_units_per_building: dict[str, list[str]] = {}
+        unit_rent_weight: dict[str, float] = {}   # display_name → rent_weight
         for cc_obj in ccs:
             if cc_obj.tally_cc is None or cc_obj.is_excluded_from_split:
                 continue
@@ -30,6 +32,7 @@ class UnitReportProcessor(BaseReportProcessor):
             if bldg_name == "General":
                 continue
             eligible_units_per_building.setdefault(bldg_name, []).append(cc_obj.display_name)
+            unit_rent_weight[cc_obj.display_name] = cc_obj.rent_weight
 
         UNIT_GENERAL_CCS = [
             cc_obj.tally_cc for cc_obj in ccs
@@ -109,16 +112,25 @@ class UnitReportProcessor(BaseReportProcessor):
             d["gross_sales"] = d["gross_sales"] + d["gst"] + d["host_fees"]
 
         # ── Pre-fetch: General CC salary and consumables shares per unit ───────
-        building_salary_shares:      dict[str, float] = {}
-        building_consumables_shares: dict[str, float] = {}
-        building_electricity_shares: dict[str, float] = {}
-        building_maintenance_shares: dict[str, float] = {}
+        building_salary_shares:       dict[str, float] = {}
+        building_consumables_shares:  dict[str, float] = {}
+        building_electricity_shares:  dict[str, float] = {}
+        building_maintenance_shares:  dict[str, float] = {}
+        building_conveyance_shares:   dict[str, float] = {}
+        building_office_admin_shares: dict[str, float] = {}
 
         # eligible_units_per_building already built from DB flags above
 
         # ── Pre-fetch: building-level rent from trial balance ─────────────────
-        # Index trial balance by ledger name for O(1) lookup (no extra API call)
-        _tb_by_name = {lb["ledger_name"]: lb for lb in self.raw_data}
+        # Index trial balance by ledger name for O(1) lookup (no extra API call).
+        # Also build a normalised index (collapse runs of whitespace, lowercase)
+        # so single-vs-double space mismatches between DB and Tally are tolerated.
+        import re as _re
+        def _norm(s: str) -> str:
+            return _re.sub(r"\s+", " ", s.strip()).lower()
+
+        _tb_by_name      = {lb["ledger_name"]: lb for lb in self.raw_data}
+        _tb_by_name_norm = {_norm(lb["ledger_name"]): lb for lb in self.raw_data}
 
         building_rent_shares: dict[str, float] = {}
         for bldg, rent_ledger in BUILDING_RENT_LEDGER.items():
@@ -128,14 +140,27 @@ class UnitReportProcessor(BaseReportProcessor):
             num_units = len(eligible_disps)
             if num_units == 0:
                 continue
-            tb_entry = _tb_by_name.get(rent_ledger)
+            tb_entry = _tb_by_name.get(rent_ledger) or _tb_by_name_norm.get(_norm(rent_ledger))
             if tb_entry is None or tb_entry["amount"] == 0:
                 continue  # ledger not found or zero → fall back to CC breakup
-            # trial balance amount is already signed (negative = Dr/expense)
-            per_unit = tb_entry["amount"] / num_units
+            # Weighted split: each unit gets (its weight / total weight) * total_rent
+            # Units with rent_weight=1.0 get equal shares; higher weights get more.
+            total_weight = sum(unit_rent_weight.get(d, 1.0) for d in eligible_disps)
+            total_rent = tb_entry["amount"]   # already signed (negative = Dr/expense)
             for disp in eligible_disps:
-                building_rent_shares[disp] = per_unit
+                w = unit_rent_weight.get(disp, 1.0)
+                building_rent_shares[disp] = (w / total_weight) * total_rent
         # ── End rent pre-fetch ────────────────────────────────────────────────
+
+        # Buildings that actually had a valid, non-zero rent entry in the trial balance.
+        # Used to gate conveyance/office-admin distribution from building General CCs.
+        _buildings_with_rent: set[str] = set()
+        for _bldg, _rent_ledger in BUILDING_RENT_LEDGER.items():
+            if _rent_ledger is None:
+                continue
+            _tb = _tb_by_name.get(_rent_ledger) or _tb_by_name_norm.get(_norm(_rent_ledger))
+            if _tb and _tb.get("amount", 0) != 0:
+                _buildings_with_rent.add(_bldg)
 
         # Fetch each building's General CC once; compute per-unit salary & consumables
         for bldg, general_cc in BUILDING_GENERAL_CC_MAPPING.items():
@@ -149,10 +174,12 @@ class UnitReportProcessor(BaseReportProcessor):
             gen_ledgers = self.api.fetch_cost_center_breakup(
                 self.from_date, self.to_date, general_cc
             )
-            total_salary      = 0.0
-            total_consumables = 0.0
-            total_electricity = 0.0
-            total_maintenance = 0.0
+            total_salary       = 0.0
+            total_consumables  = 0.0
+            total_electricity  = 0.0
+            total_maintenance  = 0.0
+            total_conveyance   = 0.0
+            total_office_admin = 0.0
             for ledger in gen_ledgers:
                 lamount = -ledger["amount"] if ledger["dr_cr"] == "Dr" else ledger["amount"]
                 lmap = self.mappings.get(ledger["ledger_name"])
@@ -167,6 +194,10 @@ class UnitReportProcessor(BaseReportProcessor):
                     total_electricity += lamount
                 elif line == "Maintenance":
                     total_maintenance += lamount
+                elif "conveyance" in line.lower() or "travelling" in line.lower():
+                    total_conveyance += lamount
+                elif "office admin" in line.lower():
+                    total_office_admin += lamount
 
             salary_per_unit      = total_salary      / num_units
             consumables_per_unit = total_consumables / num_units
@@ -177,6 +208,16 @@ class UnitReportProcessor(BaseReportProcessor):
                 building_consumables_shares[disp] = consumables_per_unit
                 building_electricity_shares[disp] = electricity_per_unit
                 building_maintenance_shares[disp] = maintenance_per_unit
+
+            # Conveyance and Office Admin: only distribute if building has rent data
+            if bldg in _buildings_with_rent:
+                conv_per_unit   = total_conveyance   / num_units
+                oadmin_per_unit = total_office_admin / num_units
+                for disp in eligible_disps:
+                    if conv_per_unit != 0.0:
+                        building_conveyance_shares[disp]   = conv_per_unit
+                    if oadmin_per_unit != 0.0:
+                        building_office_admin_shares[disp] = oadmin_per_unit
         # ── End pre-fetch ──────────────────────────────────────────────────────
 
         # Canonical indirect key names (normalise DB line_item spelling variants)
@@ -253,6 +294,17 @@ class UnitReportProcessor(BaseReportProcessor):
                 if maintenance_share != 0.0:
                     unit_data[disp]["direct_exp"]["Maintenance"] = (
                         unit_data[disp]["direct_exp"].get("Maintenance", 0.0) + maintenance_share
+                    )
+                conv_share = building_conveyance_shares.get(disp, 0.0)
+                if conv_share != 0.0:
+                    _key = "Conveyance/ Travelling Expenses"
+                    unit_data[disp]["indirect_exp"][_key] = (
+                        unit_data[disp]["indirect_exp"].get(_key, 0.0) + conv_share
+                    )
+                oadmin_share = building_office_admin_shares.get(disp, 0.0)
+                if oadmin_share != 0.0:
+                    unit_data[disp]["indirect_exp"]["Office Admin"] = (
+                        unit_data[disp]["indirect_exp"].get("Office Admin", 0.0) + oadmin_share
                     )
 
             # Override Rent with building-level ledger value (avoids CC breakup double-count).

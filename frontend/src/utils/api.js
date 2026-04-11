@@ -39,6 +39,19 @@ export async function fetchAllData(fromYM, toYM, bust = false, signal = null) {
   }
 }
 
+export async function fetchCashFlow(p1FromYM, p1ToYM, p2FromYM, p2ToYM) {
+  const p1From = toTallyFrom(p1FromYM)
+  const p1To   = toTallyTo(p1ToYM)
+  const p2From = toTallyFrom(p2FromYM)
+  const p2To   = toTallyTo(p2ToYM)
+  const url = `/api/reports/cashflow/?p1_from=${p1From}&p1_to=${p1To}&p2_from=${p2From}&p2_to=${p2To}`
+  const res = await fetch(url, { signal: AbortSignal.timeout(300_000) })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const json = await res.json()
+  if (json.status === 'error') throw new Error(json.message)
+  return json.data
+}
+
 export async function fetchReportData(endpoint, fromYM, toYM) {
   const from = toTallyFrom(fromYM)
   const to   = toTallyTo(toYM)

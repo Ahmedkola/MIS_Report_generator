@@ -5,6 +5,7 @@ import PnLPage from './pages/PnLPage'
 import BalanceSheetPage from './pages/BalanceSheetPage'
 import MatrixPage from './pages/MatrixPage'
 import UnitWisePage from './pages/UnitWisePage'
+import CashFlowPage from './pages/CashFlowPage'
 
 export default function App() {
   return (
@@ -16,6 +17,7 @@ export default function App() {
           <Route path="balance-sheet" element={<BalanceSheetPage />} />
           <Route path="matrix"        element={<MatrixPage />} />
           <Route path="unit-wise"     element={<UnitWisePage />} />
+          <Route path="cash-flow"     element={<CashFlowPage />} />
         </Route>
       </Routes>
     </ReportDataProvider>

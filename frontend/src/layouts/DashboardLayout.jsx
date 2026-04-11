@@ -7,7 +7,7 @@ import DateRangePicker from '../components/DateRangePicker'
 
 export default function DashboardLayout() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const { loading, generate } = useReport()
+  const { loading, generate, isOffline, data } = useReport()
 
   const initialFrom = searchParams.get('from') || '2025-04'
   const initialTo   = searchParams.get('to')   || '2026-01'
@@ -33,21 +33,28 @@ export default function DashboardLayout() {
     generate(fromYM, toYM, true)
   }
 
+  // Derive actual Tally-format dates for the download URL
+  const dlFrom = data?.period_start || fromYM.replace('-', '') + '01'
+  const dlTo   = data?.period_end   || toYM.replace('-', '') + '28'
+
   return (
     <div className="min-h-screen bg-[#0A0F1E] text-slate-100">
-      <Header />
+      <Header fromDate={dlFrom} toDate={dlTo} />
 
-      <div className="border-b border-slate-800 bg-[#0D1220]">
-        <div className="max-w-screen-2xl mx-auto px-6 py-4">
-          <DateRangePicker
-            from={fromYM}
-            to={toYM}
-            onChange={handlePickerChange}
-            onGenerate={handleGenerate}
-            loading={loading}
-          />
+      {/* Hide the date picker controls in offline snapshot mode */}
+      {!isOffline && (
+        <div className="border-b border-slate-800 bg-[#0D1220]">
+          <div className="max-w-screen-2xl mx-auto px-6 py-4">
+            <DateRangePicker
+              from={fromYM}
+              to={toYM}
+              onChange={handlePickerChange}
+              onGenerate={handleGenerate}
+              loading={loading}
+            />
+          </div>
         </div>
-      </div>
+      )}
 
       <ReportTabs />
 

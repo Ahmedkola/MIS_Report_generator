@@ -131,9 +131,9 @@ export default function UnitWiseReport({ report }) {
   }
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-slate-800">
+    <div className="overflow-x-auto overflow-y-auto max-h-[75vh] rounded-xl border border-slate-800">
       <table className="border-collapse text-slate-200 bg-[#0A0F1E]" style={{ minWidth: `${(activeUnits.length + 3) * 90}px` }}>
-        <thead>
+        <thead className="sticky top-0 z-20">
           {/* ── Building group header row ── */}
           <tr className="bg-[#111827]">
             <th className="px-3 py-2 text-left text-[10px] font-semibold text-slate-400 border-r border-slate-700 sticky left-0 z-20 bg-[#111827] min-w-[160px]">

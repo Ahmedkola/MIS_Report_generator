@@ -56,11 +56,11 @@ def get_all_reports(request):
         std  = StandardReportProcessor(from_date, to_date)
         std_reports = std.process()
 
-        mat  = MatrixReportProcessor(from_date, to_date)
-        mat_reports = mat.process()
-
         unit = UnitReportProcessor(from_date, to_date)
         unit_report = unit.process()
+
+        from mis_engine.reports.matrix import aggregate_from_unit
+        mat_reports = aggregate_from_unit(unit_report)
 
         payload = {
             "status": "success",
@@ -117,5 +117,53 @@ def get_unit_wise(request):
         processor = UnitReportProcessor(from_date, to_date)
         report = processor.process()
         return JsonResponse(_build_payload(processor, "unit_wise", report))
+    except Exception as e:
+        return _handle_error(e)
+
+def get_cash_flow(request):
+    try:
+        p1_from = request.GET.get("p1_from", "")
+        p1_to   = request.GET.get("p1_to",   "")
+        p2_from = request.GET.get("p2_from", "")
+        p2_to   = request.GET.get("p2_to",   "")
+        for v in (p1_from, p1_to, p2_from, p2_to):
+            if len(v) != 8 or not v.isdigit():
+                raise ValueError(f"Invalid date '{v}'. Expected YYYYMMDD.")
+        from mis_engine.reports.cashflow import CashFlowProcessor
+        data = CashFlowProcessor(p1_from, p1_to, p2_from, p2_to).process()
+        return JsonResponse({"status": "success", "data": data})
+    except Exception as e:
+        return _handle_error(e)
+
+
+def download_report(request):
+    """
+    GET /api/reports/download/?from=20250401&to=20260131
+
+    Generates a fully self-contained offline interactive report ZIP and
+    streams it to the browser as a file download. The ZIP contains the
+    pre-built React dashboard with full report data injected inline —
+    the client only needs to extract the ZIP and open index.html.
+    """
+    try:
+        from_date, to_date = _get_dates(request)
+        from mis_engine.export import generate_report_zip
+        from django.http import HttpResponse
+
+        zip_buf  = generate_report_zip(from_date, to_date)
+        filename = f"MIS_Report_{from_date}_to_{to_date}.zip"
+
+        response = HttpResponse(
+            zip_buf.read(),
+            content_type="application/zip",
+        )
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
+
+    except FileNotFoundError as e:
+        return JsonResponse(
+            {"status": "error", "message": str(e)},
+            status=503,
+        )
     except Exception as e:
         return _handle_error(e)

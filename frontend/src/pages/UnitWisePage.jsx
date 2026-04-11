@@ -3,6 +3,7 @@ import UnitWiseReport from '../components/UnitWiseReport'
 import { SectionTitle, LoadingState, ErrorState, EmptyState } from '../components/Shared'
 import BarChartCard from '../components/charts/BarChartCard'
 import ComposedTrendCard from '../components/charts/ComposedTrendCard'
+import { formatPeriod } from '../utils/formatters'
 
 export default function UnitWisePage() {
   const { data, loading, error } = useReport()
@@ -58,7 +59,7 @@ export default function UnitWisePage() {
 
       <SectionTitle
         title="Unit-Wise P&L"
-        sub={unit?.period}
+        sub={formatPeriod(unit?.period)}
         note="Scroll horizontally to view all units →"
       />
       <UnitWiseReport report={unit} />

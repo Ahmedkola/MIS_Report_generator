@@ -7,4 +7,6 @@ urlpatterns = [
     path('reports/balance-sheet/',views.get_balance_sheet,name='get_balance_sheet'),
     path('reports/matrix/',       views.get_matrix,       name='get_matrix'),
     path('reports/unit-wise/',    views.get_unit_wise,    name='get_unit_wise'),
+    path('reports/cashflow/',     views.get_cash_flow,    name='get_cash_flow'),
+    path('reports/download/',     views.download_report,  name='download_report'),
 ]
