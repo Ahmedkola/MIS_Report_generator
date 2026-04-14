@@ -37,9 +37,19 @@ export default function DashboardLayout() {
   const dlFrom = data?.period_start || fromYM.replace('-', '') + '01'
   const dlTo   = data?.period_end   || toYM.replace('-', '') + '28'
 
+  // Human-readable period label shown in header, e.g. "Apr 2025 – Jan 2026"
+  const fmtYM = (ym) => {
+    if (!ym) return ''
+    const [y, m] = ym.split('-')
+    return new Date(Number(y), Number(m) - 1, 1).toLocaleString('en-IN', { month: 'short', year: 'numeric' })
+  }
+  const periodLabel = data && fromYM && toYM
+    ? `${fmtYM(fromYM)} – ${fmtYM(toYM)}`
+    : null
+
   return (
     <div className="min-h-screen bg-[#0A0F1E] text-slate-100">
-      <Header fromDate={dlFrom} toDate={dlTo} />
+      <Header fromDate={dlFrom} toDate={dlTo} loading={loading} periodLabel={periodLabel} />
 
       {/* Hide the date picker controls in offline snapshot mode */}
       {!isOffline && (

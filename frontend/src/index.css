@@ -31,12 +31,12 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    background: #1E293B;
+    background: #334155;
     border-radius: 3px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: #334155;
+    background: #475569;
   }
 }
 
@@ -71,6 +71,10 @@
 
   .summary-row {
     @apply font-bold text-sm border-t-2 border-gold/40;
+  }
+
+  .card-hover {
+    @apply transition-all duration-200 hover:border-slate-600 hover:shadow-lg hover:shadow-black/20;
   }
 }
 

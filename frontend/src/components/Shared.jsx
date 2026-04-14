@@ -1,6 +1,6 @@
 export function SectionTitle({ title, sub, note }) {
   return (
-    <div className="mb-5">
+    <div className="mb-5 border-l-4 border-gold pl-3">
       <h2 className="text-base font-semibold text-slate-100">{title}</h2>
       <div className="flex flex-wrap items-center gap-3 mt-0.5">
         {sub && <span className="text-xs text-slate-500 font-mono">{sub}</span>}
