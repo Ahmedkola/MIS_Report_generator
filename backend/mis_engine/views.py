@@ -62,6 +62,11 @@ def get_all_reports(request):
         from mis_engine.reports.matrix import aggregate_from_unit
         mat_reports = aggregate_from_unit(unit_report)
 
+        from mis_engine.reports.deposits_loans import DepositsLoansProcessor
+        dl = DepositsLoansProcessor(from_date, to_date)
+        dl._raw_data = unit._raw_data   # reuse already-fetched trial balance
+        dl_report = dl.process()
+
         payload = {
             "status": "success",
             "data": {
@@ -73,6 +78,7 @@ def get_all_reports(request):
                 "balance_sheet":    std_reports["balance_sheet"],
                 "matrix_pnl":       mat_reports,
                 "unit_wise":        unit_report,
+                "deposits_loans":   dl_report,
             }
         }
 
@@ -134,6 +140,21 @@ def get_cash_flow(request):
         return JsonResponse({"status": "success", "data": data})
     except Exception as e:
         return _handle_error(e)
+
+
+def debug_tb(request):
+    """Temporary: return all trial balance ledger names containing a keyword."""
+    keyword = request.GET.get('q', 'mysore').lower()
+    from_date = request.GET.get('from', '20250401')
+    to_date   = request.GET.get('to',   '20260131')
+    from tally_api import TallyAPIClient
+    api = TallyAPIClient()
+    tb = api.fetch_trial_balance(from_date, to_date)
+    matches = [
+        {"name": lb["ledger_name"], "repr": repr(lb["ledger_name"]), "amount": lb["amount"], "dr_cr": lb["dr_cr"]}
+        for lb in tb if keyword in lb["ledger_name"].lower()
+    ]
+    return JsonResponse({"matches": matches})
 
 
 def download_report(request):

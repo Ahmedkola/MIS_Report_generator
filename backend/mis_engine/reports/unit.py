@@ -326,6 +326,7 @@ class UnitReportProcessor(BaseReportProcessor):
         _gen_office_admin  = 0.0
         _gen_conveyance    = 0.0
         _gen_prof_salary   = 0.0   # Professional Fees + Salary A/c combined
+        _gen_consumables   = 0.0
 
         # Route full amounts into General Office column
         _go = "General Office"
@@ -349,6 +350,8 @@ class UnitReportProcessor(BaseReportProcessor):
                 _gen_prof_salary += _lamount
             elif _line == "Salary":
                 _gen_prof_salary += _lamount   # GRM salary in General CC
+            elif _line == "Consumables":
+                _gen_consumables += _lamount
 
             # Route into General Office column
             if _go in unit_data:
@@ -396,6 +399,11 @@ class UnitReportProcessor(BaseReportProcessor):
                 if _conv_share != 0.0:
                     unit_data[_disp]["indirect_exp"]["Conveyance/ Travelling Expenses"] = (
                         unit_data[_disp]["indirect_exp"].get("Conveyance/ Travelling Expenses", 0.0) + _conv_share
+                    )
+                _cons_share = _gen_consumables / _n_rent
+                if _cons_share != 0.0:
+                    unit_data[_disp]["direct_exp"]["Consumables"] = (
+                        unit_data[_disp]["direct_exp"].get("Consumables", 0.0) + _cons_share
                     )
                 if _prof_share != 0.0:
                     unit_data[_disp]["indirect_exp"]["Professional Fees/GRM Salary"] = (

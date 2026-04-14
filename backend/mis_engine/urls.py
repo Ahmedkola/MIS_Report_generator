@@ -9,4 +9,5 @@ urlpatterns = [
     path('reports/unit-wise/',    views.get_unit_wise,    name='get_unit_wise'),
     path('reports/cashflow/',     views.get_cash_flow,    name='get_cash_flow'),
     path('reports/download/',     views.download_report,  name='download_report'),
+    path('reports/debug-tb/',     views.debug_tb,         name='debug_tb'),
 ]

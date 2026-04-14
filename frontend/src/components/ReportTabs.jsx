@@ -6,6 +6,7 @@ const TABS = [
   { id: 'matrix',     label: 'Building-Wise Matrix', to: '/matrix' },
   { id: 'unit',       label: 'Unit-Wise P&L',        to: '/unit-wise' },
   { id: 'cash_flow',  label: 'Cash Flow Statement',  to: '/cash-flow' },
+  { id: 'deposits',   label: 'Deposits & Loans',     to: '/deposits-loans' },
 ]
 
 export default function ReportTabs() {

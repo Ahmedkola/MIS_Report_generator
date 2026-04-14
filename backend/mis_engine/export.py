@@ -48,19 +48,23 @@ def build_snapshot(from_date: str, to_date: str) -> dict:
         to_date:   "YYYYMMDD" e.g. "20260131"
     """
     from mis_engine.reports.pnl_bs import StandardReportProcessor
-    from mis_engine.reports.matrix import MatrixReportProcessor
+    from mis_engine.reports.matrix import aggregate_from_unit
     from mis_engine.reports.unit import UnitReportProcessor
+    from mis_engine.reports.deposits_loans import DepositsLoansProcessor
 
     logger.info("Building report snapshot: %s → %s", from_date, to_date)
 
     std    = StandardReportProcessor(from_date, to_date)
     std_r  = std.process()
 
-    mat    = MatrixReportProcessor(from_date, to_date)
-    mat_r  = mat.process()
-
     unit   = UnitReportProcessor(from_date, to_date)
     unit_r = unit.process()
+
+    mat_r  = aggregate_from_unit(unit_r)
+
+    dl     = DepositsLoansProcessor(from_date, to_date)
+    dl._raw_data = unit._raw_data   # reuse already-fetched trial balance
+    dl_r   = dl.process()
 
     snapshot = {
         "company_id":       std.api.COMPANY_ID,
@@ -71,6 +75,7 @@ def build_snapshot(from_date: str, to_date: str) -> dict:
         "balance_sheet":    std_r["balance_sheet"],
         "matrix_pnl":       mat_r,
         "unit_wise":        unit_r,
+        "deposits_loans":   dl_r,
     }
 
     logger.info(
